@@ -1,10 +1,9 @@
 # pyrefly: ignore [missing-import]
 from langgraph.graph import StateGraph, START, END
 
-from graph.state import AgentState
-from graph.router import detect_intent
-
-from graph.node import (
+from app.agents.graph.state import AgentState
+from app.agents.graph.router import detect_intent
+from app.agents.graph.node import (
     candidate_evaluator,
     interview_email_generator,
     hr_policy_specialist,
@@ -12,8 +11,6 @@ from graph.node import (
     final_response,
     supervisor_decision,
 )
-
-
 # ==========================================
 # Supervisor Agent
 # ==========================================

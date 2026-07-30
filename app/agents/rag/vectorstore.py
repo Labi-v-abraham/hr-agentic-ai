@@ -1,7 +1,7 @@
 from langchain_chroma import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-from rag.loader import load_documents
+from app.agents.rag.loader import load_documents
 
 
 import streamlit as st

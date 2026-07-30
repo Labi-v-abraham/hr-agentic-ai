@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from app.utils.config import get_llm
 from langchain_chroma import Chroma
 from langchain_community.embeddings import HuggingFaceEmbeddings
 

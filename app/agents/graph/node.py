@@ -1,9 +1,9 @@
 import json
 
-from graph.state import AgentState
-from config import get_llm
-from models import CandidateEvaluation
-from rag.retriever import get_retriever
+from app.agents.graph.state import AgentState
+from app.utils.config import get_llm
+from app.models.models import CandidateEvaluation
+from app.agents.rag.retriever import get_retriever
 
 # ==========================================
 # Candidate Evaluation Specialist

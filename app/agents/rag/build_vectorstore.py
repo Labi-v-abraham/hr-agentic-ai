@@ -2,8 +2,9 @@ import chromadb
 from pathlib import Path
 
 from langchain_chroma import Chroma
-from rag.retriever import get_embeddings
-from rag.loader import load_documents
+from app.agents.rag.retriever import get_embeddings
+from app.agents.rag.loader import load_documents
+
 
 
 def build_vectorstore(pdf_path: str):

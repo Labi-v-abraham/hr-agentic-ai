@@ -29,8 +29,9 @@ load_ai_resources()
 
 # 3. Setup Navigation
 login_page = st.Page("app/pages/login.py", title="Log in", icon=":material/login:")
-chat_page = st.Page("app/pages/chat.py", title="HR Agent", icon=":material/chat:", default=True)
-admin_page = st.Page("app/pages/admin.py", title="Admin Dashboard", icon=":material/settings:")
+chat_page = st.Page("app/pages/chat.py", title="💬 Chat", default=True)
+kb_page = st.Page("app/pages/knowledge_base.py", title="📚 Knowledge Base")
+admin_page = st.Page("app/pages/admin.py", title="⚙️ Admin Dashboard")
 
 session_manager = get_session_manager()
 auth_service = get_auth_service()
@@ -46,19 +47,23 @@ else:
     
     st.sidebar.markdown(f"### 👋 Welcome, {name}")
     st.sidebar.markdown(f"**Role:** `{role}`")
-    
-    if st.sidebar.button("Logout"):
-        auth_service.logout()
-        st.rerun()
         
     st.sidebar.divider()
     
     pages = [chat_page]
     
-    # Hide admin dashboard if not admin
+    # Hide admin dashboard and knowledge base if not admin/allowed
+    if authz.can_upload_documents():
+        pages.append(kb_page)
     if authz.can_manage_users():
         pages.append(admin_page)
         
     pg = st.navigation(pages)
 
 pg.run()
+
+if current_profile:
+    st.sidebar.divider()
+    if st.sidebar.button("Logout", key="logout_bottom"):
+        auth_service.logout()
+        st.rerun()

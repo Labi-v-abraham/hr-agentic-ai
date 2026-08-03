@@ -48,3 +48,14 @@ class SupabaseService:
             return self._admin_client
         logger.warning("SUPABASE_SERVICE_KEY not set. Falling back to anon client for admin operations.")
         return self._client
+
+    def insert_evaluation(self, evaluation_data: dict) -> bool:
+        """Insert a resume evaluation into the evaluations table."""
+        try:
+            res = self.get_admin_client().table("evaluations").insert(evaluation_data).execute()
+            if res.data:
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Failed to insert evaluation: {e}")
+            return False

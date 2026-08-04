@@ -51,11 +51,11 @@ def candidate_evaluator(state: AgentState):
         
         if not documents:
             print("\nNo chunks retrieved.")
-            
-            # The prompt says "Do not call the LLM if zero chunks."
             state["match_percentage"] = 0
             state["recommendation"] = "Unable to Evaluate"
-            state["analysis"] = "No chunks retrieved."
+            state["analysis"] = "No role knowledge base chunks were retrieved; cannot evaluate."
+            state["suggested_questions"] = []
+            state["final_answer"] = "Evaluation could not be completed: no matching knowledge base content found."
             state["evaluation_data"] = {}
             return state
 
@@ -80,26 +80,26 @@ def candidate_evaluator(state: AgentState):
                 for doc in documents
             )
             
-        prompt = f"""
-You are a Senior HR Recruitment Specialist and Technical Interviewer.
+        prompt = f"""You are a Senior HR Recruitment Specialist.
 
-Your task is to evaluate the uploaded resume for the role of: {state.get('current_role', 'General Candidate')}
+Evaluate the resume below against the role: {state.get('current_role', 'General Candidate')}
 
-Resume:
+RESUME:
 {state["resume_text"]}
 {kb_context}
 
-Job Description / Request:
+REQUEST:
 {state["query"]}
 
-Instructions:
-1. Perform a deep analysis of the candidate's technical skills, soft skills, and experience.
-2. Calculate an estimated ATS Score and an overall match percentage.
-3. Identify key strengths, weaknesses, and any missing skills.
-4. Highlight relevant certifications or projects.
-5. Provide specific Technical and HR interview questions.
-6. Make a clear hiring recommendation (e.g., Selected, Rejected, Keep on file).
-7. Return a detailed JSON evaluation.
+OUTPUT RULES (strictly enforced):
+1. match_percentage: integer 0-100.
+2. recommendation: MUST be exactly one of "Selected", "Rejected", or "Hold". No other wording.
+3. analysis: 2-4 sentences ONLY. Summarise key fit factors and major gaps. 
+   Do NOT include interview questions, coaching tips, or candidate-facing text here.
+4. suggested_questions: at most 5 short interview questions targeted at this candidate's 
+   specific gaps. Leave empty if none are warranted.
+5. final_answer: ONE sentence (max 25 words) suitable as a chat reply, 
+   e.g. "The candidate is a moderate match for the {state.get('current_role', 'role')} role with {'{match_percentage}'}% alignment."
 """
 
         result = structured_llm.invoke(prompt)
@@ -107,16 +107,18 @@ Instructions:
         state["match_percentage"] = result.match_percentage
         state["recommendation"] = result.recommendation
         state["analysis"] = result.analysis
-        
-        # Save evaluation data to state so final_response can format it and save to DB
-        state["evaluation_data"] = result.dict()
+        state["suggested_questions"] = result.suggested_questions or []
+        state["final_answer"] = result.final_answer
+        state["evaluation_data"] = result.model_dump()
 
-        state["execution_log"].append(f"👨‍💼 Evaluated candidate for {state.get('current_role')}.")
+        state["execution_log"].append(f"👨\u200d💼 Evaluated candidate for {state.get('current_role')}.")
 
     except Exception as e:
         state["match_percentage"] = 0
         state["recommendation"] = "Unable to Evaluate"
         state["analysis"] = str(e)
+        state["suggested_questions"] = []
+        state["final_answer"] = "Resume evaluation failed due to an internal error."
         state["evaluation_data"] = {}
         state["execution_log"].append(f"❌ Candidate Evaluator failed: {e}")
 
@@ -308,36 +310,25 @@ def final_response(state: AgentState):
         eval_data = state.get("evaluation_data", {})
         
         if eval_data:
-            # Format the output beautifully
-            report = f"# Resume Evaluation: {state.get('current_role', 'Candidate')}\n\n"
-            report += f"**ATS Score:** {eval_data.get('ats_score', 0)}/100 | **Overall Match:** {eval_data.get('match_percentage', 0)}%\n\n"
-            report += f"## Recommendation: {eval_data.get('recommendation', 'N/A')}\n\n"
-            report += f"### Summary\n{eval_data.get('candidate_summary', '')}\n\n"
-            
-            report += "### 💡 Skills & Match\n"
-            report += f"**Skills Match Analysis:** {eval_data.get('skills_match', '')}\n\n"
-            report += f"- **Technical Skills:** {', '.join(eval_data.get('technical_skills', []))}\n"
-            report += f"- **Soft Skills:** {', '.join(eval_data.get('soft_skills', []))}\n"
-            report += f"- **Missing Skills:** {', '.join(eval_data.get('missing_skills', []))}\n\n"
-            
-            report += "### 📊 Detailed Analysis\n"
-            report += f"- **Education:** {eval_data.get('education_analysis', '')}\n"
-            report += f"- **Experience:** {eval_data.get('experience_analysis', '')}\n"
-            report += f"- **Projects:** {eval_data.get('project_analysis', '')}\n\n"
-            
-            report += "### ✅ Strengths & ⚠️ Weaknesses\n"
-            report += f"**Strengths:** {', '.join(eval_data.get('strengths', []))}\n"
-            report += f"**Weaknesses / Risks:** {', '.join(eval_data.get('weaknesses', []) + eval_data.get('risk_factors', []))}\n\n"
-            
-            report += "### 💬 Interview Questions\n"
-            report += "**Technical:**\n" + "\n".join([f"- {q}" for q in eval_data.get('technical_interview_questions', [])]) + "\n\n"
-            report += "**HR:**\n" + "\n".join([f"- {q}" for q in eval_data.get('hr_interview_questions', [])]) + "\n\n"
-            
+            role = state.get('current_role', 'Candidate')
+            pct = eval_data.get('match_percentage', 0)
+            rec = eval_data.get('recommendation', 'N/A')
+            analysis = eval_data.get('analysis', '')
+            questions = eval_data.get('suggested_questions') or []
+
+            report = f"## Resume Evaluation: {role}\n\n"
+            report += f"**Match:** {pct}% | **Decision:** {rec}\n\n"
+            report += f"{analysis}\n"
+
+            if questions:
+                report += "\n**Suggested Interview Questions:**\n"
+                report += "\n".join(f"- {q}" for q in questions[:5]) + "\n"
+
             if state["intent"] == "recruitment" and state.get("email"):
-                report += f"---\n\n## Interview Invitation Email\n\n{state['email']}"
-                
-            state["final_answer"] = report
-            
+                report += f"\n---\n\n## Interview Invitation Email\n\n{state['email']}"
+
+            state["final_answer"] = state.get("final_answer") or report
+
             # Save to Supabase
             try:
                 from app.utils.dependencies import get_backend_container
@@ -345,22 +336,22 @@ def final_response(state: AgentState):
                 supabase_service = container["supabase_service"]
                 
                 db_payload = {
-                    "candidate_name": "Unknown (Parsed from Resume)", # Or parse it via LLM
+                    "candidate_name": "Unknown (Parsed from Resume)",
                     "email": "unknown@example.com",
-                    "applied_role": state.get("current_role", "Unknown"),
-                    "ats_score": eval_data.get("ats_score", 0),
-                    "overall_score": eval_data.get("match_percentage", 0),
-                    "recommendation": eval_data.get("recommendation", ""),
-                    "strengths": eval_data.get("strengths", []),
-                    "weaknesses": eval_data.get("weaknesses", []),
-                    "missing_skills": eval_data.get("missing_skills", []),
-                    "interview_questions": eval_data.get("technical_interview_questions", []) + eval_data.get("hr_interview_questions", []),
+                    "applied_role": role,
+                    "ats_score": pct,
+                    "overall_score": pct,
+                    "recommendation": rec,
+                    "strengths": [],
+                    "weaknesses": [],
+                    "missing_skills": [],
+                    "interview_questions": questions,
                     "evaluation_json": eval_data
                 }
                 supabase_service.insert_evaluation(db_payload)
             except Exception as e:
                 import logging
-                logging.error(f"Failed to save evaluation to DB: {e}")
+                logging.error(f"Failed to insert evaluation: {e}")
                 
         else:
             state["final_answer"] = f"# Evaluation Failed\n\n{state.get('analysis', 'Unknown error occurred.')}"

@@ -1,24 +1,32 @@
+from typing import Literal, List, Optional
 from pydantic import BaseModel, Field
 
 
 class CandidateEvaluation(BaseModel):
-    candidate_summary: str = Field(description="Summary of the candidate")
-    skills_match: str = Field(description="Analysis of skills match")
-    ats_score: int = Field(description="Estimated ATS Score (0-100)")
-    technical_skills: list[str] = Field(description="Identified technical skills")
-    soft_skills: list[str] = Field(description="Identified soft skills")
-    education_analysis: str = Field(description="Analysis of education")
-    experience_analysis: str = Field(description="Analysis of work experience")
-    project_analysis: str = Field(description="Analysis of projects")
-    strengths: list[str] = Field(description="Key strengths")
-    weaknesses: list[str] = Field(description="Key weaknesses or areas of concern")
-    missing_skills: list[str] = Field(description="Skills required by JD but missing in resume")
-    relevant_certifications: list[str] = Field(description="Relevant certifications")
-    risk_factors: list[str] = Field(description="Potential risk factors")
-    match_percentage: int = Field(description="Overall match percentage (0-100)")
-    recommendation: str = Field(description="Hiring recommendation (e.g., Selected, Rejected, Keep on file)")
-    technical_interview_questions: list[str] = Field(description="Technical interview questions to ask")
-    hr_interview_questions: list[str] = Field(description="HR interview questions to ask")
-    final_decision: str = Field(description="Final decision summary")
-    confidence_score: int = Field(description="Confidence in this evaluation (0-100)")
-    analysis: str = Field(description="Detailed explanation of the evaluation")
+    match_percentage: int = Field(
+        description="Overall match percentage between resume and role requirements (0-100)."
+    )
+    recommendation: Literal["Selected", "Rejected", "Hold"] = Field(
+        description="Hiring decision. Must be exactly one of: Selected, Rejected, Hold."
+    )
+    analysis: str = Field(
+        description=(
+            "A SHORT 2-4 sentence executive summary of the candidate's suitability. "
+            "Do NOT include interview questions, coaching advice, or candidate-facing commentary here. "
+            "Focus only on key fit factors and major gaps."
+        )
+    )
+    suggested_questions: Optional[List[str]] = Field(
+        default=None,
+        description=(
+            "Up to 5 interview questions to ask this specific candidate. "
+            "Only populate if the evaluation reveals specific angles worth probing. "
+            "Never duplicate content from 'analysis'."
+        )
+    )
+    final_answer: str = Field(
+        description=(
+            "A single short sentence (max 25 words) for display as the main chat response. "
+            "Example: 'The candidate is a strong match for the React Developer role with 78% alignment.'"
+        )
+    )

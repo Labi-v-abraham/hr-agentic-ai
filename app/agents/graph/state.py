@@ -1,5 +1,4 @@
-from typing import TypedDict
-from typing import Optional
+from typing import TypedDict, List, Optional
 
 class AgentState(TypedDict):
     query: str
@@ -12,6 +11,7 @@ class AgentState(TypedDict):
     match_percentage: int
     recommendation: str
     analysis: str
+    suggested_questions: List[str]
     email: str
     policy: str
     final_answer: str

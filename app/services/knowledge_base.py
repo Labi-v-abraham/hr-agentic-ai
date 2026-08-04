@@ -111,7 +111,7 @@ class KnowledgeBaseService:
                 return False, f"Storage upload failed: {str(e)}"
 
             # 3. Extract and Embed
-            success, msg = self._extract_and_embed(doc_id, file_bytes, filename, kb_name)
+            success, msg = self._extract_and_embed(doc_id, file_bytes, filename, kb_name, kb_id)
             
             if success:
                 self.supabase.table("documents").update({"status": "PROCESSED"}).eq("id", doc_id).execute()
@@ -124,7 +124,7 @@ class KnowledgeBaseService:
             logger.error(f"Unexpected error in upload_document: {e}")
             return False, str(e)
 
-    def _extract_and_embed(self, document_id: str, file_bytes: bytes, filename: str, kb_name: str = "General HR") -> Tuple[bool, str]:
+    def _extract_and_embed(self, document_id: str, file_bytes: bytes, filename: str, kb_name: str, kb_id: str) -> Tuple[bool, str]:
         """Saves bytes to tmp file, loads with PyPDFLoader, and adds to ChromaDB with deterministic IDs."""
         tmp_path = None
         try:
@@ -142,15 +142,24 @@ class KnowledgeBaseService:
             
             ids = []
             for i, chunk in enumerate(chunks):
+                chunk.metadata["knowledge_base_id"] = kb_id
+                chunk.metadata["knowledge_base_name"] = kb_name
                 chunk.metadata["document_id"] = document_id
                 chunk.metadata["filename"] = filename
-                chunk.metadata["kb_name"] = kb_name
+                
+                print("\nMetadata before insertion:")
+                print(chunk.metadata)
+                
                 ids.append(f"{document_id}_chunk_{i}")
 
             # 3. Upsert to ChromaDB (Adds if missing, updates if existing)
             vectorstore.add_documents(documents=chunks, ids=ids)
-            print("Vector count:", vectorstore._collection.count())
-            print("Vectorstore path:", self.vectorstore_path)
+            
+            print("\n===============================")
+            print("Total vector count:", vectorstore._collection.count())
+            stored_metadatas = vectorstore._collection.get(include=["metadatas"])["metadatas"]
+            print("First 5 stored metadatas:", stored_metadatas[:5])
+            print("===============================\n")
             
             
             return True, "Success"
@@ -256,7 +265,8 @@ class KnowledgeBaseService:
                 document_id,
                 file_bytes,
                 doc["name"],
-                kb_name
+                kb_name,
+                doc["knowledge_base_id"]
             )
             
             if success:

@@ -19,13 +19,75 @@ def candidate_evaluator(state: AgentState):
 
     structured_llm = get_llm().with_structured_output(CandidateEvaluation)
 
-    prompt = f"""
+    try:
+        kb_name = state.get("current_role") if state.get("current_role") else "General HR"
+        from app.utils.dependencies import get_backend_container
+        client = get_backend_container()["supabase_service"].get_admin_client()
+        res_kb = client.table("knowledge_bases").select("id").eq("name", kb_name).execute()
+        kb_id = res_kb.data[0]["id"] if res_kb.data else "unknown"
+
+        print("============================")
+        print("REQUEST")
+        print("============================")
+        print("\nIntent:")
+        print("resume")
+        print("\nKnowledge Base:")
+        print(kb_name)
+        print("\nKnowledge Base ID:")
+        print(kb_id)
+        print("\n{")
+        print("    \"knowledge_base_id\":")
+        print(f"    \"{kb_id}\"")
+        print("}")
+
+        from app.agents.rag.retriever import get_vectorstore
+        vs = get_vectorstore()
+        
+        docs_and_scores = vs.similarity_search_with_score(state["query"], k=10, filter={"knowledge_base_id": {"$in": [kb_id]}})
+        documents = [d for d, s in docs_and_scores]
+        
+        print("\nChunks Retrieved:")
+        print(len(documents))
+        
+        if not documents:
+            print("\nNo chunks retrieved.")
+            
+            # The prompt says "Do not call the LLM if zero chunks."
+            state["match_percentage"] = 0
+            state["recommendation"] = "Unable to Evaluate"
+            state["analysis"] = "No chunks retrieved."
+            state["evaluation_data"] = {}
+            return state
+
+        docs_names = list(set(doc.metadata.get('filename', 'Unknown') for doc in documents))
+        print("\nFiles:")
+        for name in docs_names:
+            print(name)
+        print()
+        
+        for i, (doc, score) in enumerate(docs_and_scores, 1):
+            print(f"Chunk {i}")
+            print("\nSource:")
+            print(doc.metadata.get("filename", "Unknown"))
+            print("\nScore:")
+            print(f"{score:.2f}")
+            print()
+        
+        kb_context = ""
+        if documents:
+            kb_context = "\n\nRole Knowledge Base Context:\n" + "\n\n".join(
+                f"--- {doc.metadata.get('filename', 'Doc')} ---\n{doc.page_content}"
+                for doc in documents
+            )
+            
+        prompt = f"""
 You are a Senior HR Recruitment Specialist and Technical Interviewer.
 
 Your task is to evaluate the uploaded resume for the role of: {state.get('current_role', 'General Candidate')}
 
 Resume:
 {state["resume_text"]}
+{kb_context}
 
 Job Description / Request:
 {state["query"]}
@@ -40,12 +102,6 @@ Instructions:
 7. Return a detailed JSON evaluation.
 """
 
-    try:
-        # Also query the role-specific knowledge base to get evaluation rubrics if available
-        retriever = get_retriever(active_kbs=state.get("active_kbs", ["General HR"]))
-        # Just to add context, although structured output is main goal.
-        # Actually, let's just do the evaluation since the prompt is already huge.
-        
         result = structured_llm.invoke(prompt)
 
         state["match_percentage"] = result.match_percentage
@@ -132,10 +188,54 @@ def hr_policy_specialist(state: AgentState):
     """
 
     try:
-        # Retrieve relevant handbook sections using active KBs
-        active_kbs = state.get("active_kbs", ["General HR"])
-        retriever = get_retriever(active_kbs=active_kbs)
-        documents = retriever.invoke(state["query"])
+        kb_name = "General HR"
+        from app.utils.dependencies import get_backend_container
+        client = get_backend_container()["supabase_service"].get_admin_client()
+        res_kb = client.table("knowledge_bases").select("id").eq("name", kb_name).execute()
+        kb_id = res_kb.data[0]["id"] if res_kb.data else "unknown"
+
+        print("============================")
+        print("REQUEST")
+        print("============================")
+        print("\nIntent:")
+        print("policy")
+        print("\nKnowledge Base:")
+        print(kb_name)
+        print("\nKnowledge Base ID:")
+        print(kb_id)
+        print("\n{")
+        print("    \"knowledge_base_id\":")
+        print(f"    \"{kb_id}\"")
+        print("}")
+
+        from app.agents.rag.retriever import get_vectorstore
+        vs = get_vectorstore()
+        
+        # Using similarity search directly to get scores
+        docs_and_scores = vs.similarity_search_with_score(state["query"], k=10, filter={"knowledge_base_id": {"$in": [kb_id]}})
+        documents = [d for d, s in docs_and_scores]
+        
+        print("\nChunks Retrieved:")
+        print(len(documents))
+        
+        if not documents:
+            print("\nNo chunks retrieved.")
+            state["policy"] = "No information found"
+            return state
+
+        docs_names = list(set(doc.metadata.get('filename', 'Unknown') for doc in documents))
+        print("\nFiles:")
+        for name in docs_names:
+            print(name)
+        print()
+        
+        for i, (doc, score) in enumerate(docs_and_scores, 1):
+            print(f"Chunk {i}")
+            print("\nSource:")
+            print(doc.metadata.get("filename", "Unknown"))
+            print("\nScore:")
+            print(f"{score:.2f}")
+            print()
 
         context = "\n\n".join(
             f"--- Source: {doc.metadata.get('filename', 'Employee Handbook')} ---\n{doc.page_content}"
@@ -160,8 +260,13 @@ Question:
 
 Provide a clear and professional answer.
 """
+        print("\nPrompt sent to LLM:")
+        print(prompt)
 
         response = get_llm().invoke(prompt)
+        
+        print("\nLLM output:")
+        print(response.content)
 
         state["policy"] = response.content
 
@@ -171,9 +276,7 @@ Provide a clear and professional answer.
             "Unable to retrieve HR policy information.\n\n"
             f"Error: {str(e)}"
         )
-        state["execution_log"].append(
-    "📚 HR Policy Specialist answered handbook question."
-)
+        state["execution_log"].append("📚 HR Policy Specialist answered handbook question.")
 
     return state
 # ==========================================
@@ -261,6 +364,10 @@ def final_response(state: AgentState):
                 
         else:
             state["final_answer"] = f"# Evaluation Failed\n\n{state.get('analysis', 'Unknown error occurred.')}"
+
+    elif state["intent"] == "general":
+        # Pass through the answer generated by general_assistant
+        pass
 
     else:
         state["final_answer"] = "Task Completed."

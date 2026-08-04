@@ -28,7 +28,13 @@ with st.container(border=True):
     col1, col2 = st.columns([1, 2])
     
     with col1:
-        kb_name = st.text_input("Knowledge Base Name", value="General HR", help="Specify which knowledge base this document belongs to (e.g., Software Engineer, General HR)")
+        from app.utils.dependencies import get_backend_container
+        client = get_backend_container()["supabase_service"].get_admin_client()
+        res = client.table("knowledge_bases").select("name").eq("is_active", True).order("name").execute()
+        kbs = [r["name"] for r in res.data] if res.data else ["General HR"]
+        default_index = kbs.index("General HR") if "General HR" in kbs else 0
+        
+        kb_name = st.selectbox("Knowledge Base", options=kbs, index=default_index, help="Specify which knowledge base this document belongs to")
     
     with col2:
         uploaded_file = st.file_uploader("Upload PDF Document", type=["pdf"])
@@ -93,7 +99,13 @@ else:
             # Inline Edit Form
             if st.session_state.get(f"edit_{doc['id']}", False):
                 with st.expander("Edit Document Metadata", expanded=True):
-                    new_kb = st.text_input("Knowledge Base", value=kb, key=f"nkb_{doc['id']}")
+                    from app.utils.dependencies import get_backend_container
+                    client = get_backend_container()["supabase_service"].get_admin_client()
+                    res = client.table("knowledge_bases").select("name").eq("is_active", True).order("name").execute()
+                    kbs_edit = [r["name"] for r in res.data] if res.data else ["General HR"]
+                    edit_index = kbs_edit.index(kb) if kb in kbs_edit else 0
+                    
+                    new_kb = st.selectbox("Knowledge Base", options=kbs_edit, index=edit_index, key=f"nkb_{doc['id']}")
                     if st.button("Save Changes", key=f"save_{doc['id']}"):
                         try:
                             new_kb_id = kb_service.get_knowledge_base_id(new_kb)

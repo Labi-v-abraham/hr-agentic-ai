@@ -31,6 +31,7 @@ load_ai_resources()
 login_page = st.Page("app/pages/login.py", title="Log in", icon=":material/login:")
 chat_page = st.Page("app/pages/chat.py", title="💬 Chat", default=True)
 kb_page = st.Page("app/pages/knowledge_base.py", title="📚 Knowledge Base")
+kb_types_page = st.Page("app/pages/knowledge_base_types.py", title="📑 Knowledge Base Types")
 admin_page = st.Page("app/pages/admin.py", title="⚙️ Admin Dashboard")
 
 session_manager = get_session_manager()
@@ -56,6 +57,7 @@ else:
     if authz.can_upload_documents():
         pages.append(kb_page)
     if authz.can_manage_users():
+        pages.append(kb_types_page)
         pages.append(admin_page)
         
     pg = st.navigation(pages)

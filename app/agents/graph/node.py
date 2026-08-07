@@ -100,6 +100,10 @@ OUTPUT RULES (strictly enforced):
    specific gaps. Leave empty if none are warranted.
 5. final_answer: ONE sentence (max 25 words) suitable as a chat reply, 
    e.g. "The candidate is a moderate match for the {state.get('current_role', 'role')} role with {'{match_percentage}'}% alignment."
+6. scorecard: Break down the evaluation into 3-6 specific criteria relevant to THIS role 
+   (derive criteria from the role knowledge base content provided above, not a generic fixed list). 
+   Each criterion needs a 0-100 score and a one-sentence justification grounded in the resume 
+   and role requirements.
 """
 
         result = structured_llm.invoke(prompt)
@@ -168,12 +172,13 @@ Instructions:
     try:
         response = get_llm().invoke(prompt)
         state["email"] = response.content
-
-    except Exception as e:
-        state["email"] = f"Unable to generate interview email.\n\nError: {str(e)}"
         state["execution_log"].append(
     "📧 HR Communication Specialist generated interview invitation."
 )
+
+    except Exception as e:
+        state["email"] = f"Unable to generate interview email.\n\nError: {str(e)}"
+        state["execution_log"].append(f"❌ Interview Email Generator failed: {e}")
 
     return state
 
@@ -271,6 +276,7 @@ Provide a clear and professional answer.
         print(response.content)
 
         state["policy"] = response.content
+        state["execution_log"].append("📚 HR Policy Specialist answered handbook question.")
 
     except Exception as e:
 
@@ -278,7 +284,7 @@ Provide a clear and professional answer.
             "Unable to retrieve HR policy information.\n\n"
             f"Error: {str(e)}"
         )
-        state["execution_log"].append("📚 HR Policy Specialist answered handbook question.")
+        state["execution_log"].append(f"❌ HR Policy Specialist failed: {e}")
 
     return state
 # ==========================================
@@ -327,7 +333,7 @@ def final_response(state: AgentState):
             if state["intent"] == "recruitment" and state.get("email"):
                 report += f"\n---\n\n## Interview Invitation Email\n\n{state['email']}"
 
-            state["final_answer"] = state.get("final_answer") or report
+            state["final_answer"] = report
 
             # Save to Supabase
             try:

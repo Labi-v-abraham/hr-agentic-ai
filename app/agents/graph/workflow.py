@@ -10,6 +10,7 @@ from app.agents.graph.node import (
     general_assistant,
     final_response,
     supervisor_decision,
+    onboarding_specialist,
 )
 # ==========================================
 # Supervisor Agent
@@ -47,6 +48,9 @@ def route_intent(state: AgentState):
     elif intent == "policy":
         return "policy"
 
+    elif intent == "onboarding":
+        return "onboarding"
+
     else:
         return "general"
 
@@ -81,6 +85,7 @@ def get_graph():
     builder.add_node("interview_email", interview_email_generator)
     builder.add_node("policy", hr_policy_specialist)
     builder.add_node("general", general_assistant)
+    builder.add_node("onboarding", onboarding_specialist)
     builder.add_node("final", final_response)
 
     # Start
@@ -108,6 +113,7 @@ def get_graph():
     builder.add_edge("interview_email", "final")
     builder.add_edge("policy", "final")
     builder.add_edge("general", "final")
+    builder.add_edge("onboarding", "final")
     builder.add_edge("final", END)
 
     return builder.compile()

@@ -16,3 +16,6 @@ class AgentState(TypedDict):
     policy: str
     final_answer: str
     execution_log: list[str]
+    # Onboarding Checklist Tracker fields (additive only)
+    onboarding_result: Optional[str]
+    candidate_id: Optional[str]

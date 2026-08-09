@@ -94,16 +94,18 @@ REQUEST:
 OUTPUT RULES (strictly enforced):
 1. match_percentage: integer 0-100.
 2. recommendation: MUST be exactly one of "Selected", "Rejected", or "Hold". No other wording.
-3. analysis: 2-4 sentences ONLY. Summarise key fit factors and major gaps. 
+3. analysis: 2-4 sentences ONLY. Summarise key fit factors and major gaps. \
    Do NOT include interview questions, coaching tips, or candidate-facing text here.
-4. suggested_questions: at most 5 short interview questions targeted at this candidate's 
+4. suggested_questions: at most 5 short interview questions targeted at this candidate's \
    specific gaps. Leave empty if none are warranted.
-5. final_answer: ONE sentence (max 25 words) suitable as a chat reply, 
+5. final_answer: ONE sentence (max 25 words) suitable as a chat reply, \
    e.g. "The candidate is a moderate match for the {state.get('current_role', 'role')} role with {'{match_percentage}'}% alignment."
-6. scorecard: Break down the evaluation into 3-6 specific criteria relevant to THIS role 
-   (derive criteria from the role knowledge base content provided above, not a generic fixed list). 
-   Each criterion needs a 0-100 score and a one-sentence justification grounded in the resume 
+6. scorecard: Break down the evaluation into 3-6 specific criteria relevant to THIS role \
+   (derive criteria from the role knowledge base content provided above, not a generic fixed list). \
+   Each criterion needs a 0-100 score and a one-sentence justification grounded in the resume \
    and role requirements.
+7. candidate_name: Extract the candidate's full name from the resume header or contact section. \
+   If no name is clearly present, use "Unknown Candidate".
 """
 
         result = structured_llm.invoke(prompt)
@@ -301,6 +303,263 @@ def general_assistant(state: AgentState):
 
 
 # ==========================================
+# Onboarding Checklist Tracker
+# ==========================================
+
+DEFAULT_ONBOARDING_TASKS = [
+    "IT equipment setup",
+    "HR paperwork",
+    "Welcome meeting",
+    "Role-specific training",
+    "Team introduction",
+]
+
+def onboarding_specialist(state: AgentState):
+    """
+    Onboarding Checklist Tracker
+
+    Handles three sub-cases driven by query content:
+      - START  : "start onboarding" — seeds 5 default checklist rows for a candidate.
+      - UPDATE : "mark ... done/complete" — marks a matched task as DONE.
+      - STATUS : "onboarding status" / "onboarding checklist" — displays current checklist.
+    """
+
+    query_lower = state["query"].lower()
+
+    try:
+        from app.utils.dependencies import get_backend_container
+        client = get_backend_container()["supabase_service"].get_admin_client()
+
+        # ----------------------------------------------------------
+        # Helper: find the most-recent evaluation row for a candidate
+        # by case-insensitive name match in the "evaluations" table.
+        # (This codebase writes to "evaluations", not "resume_evaluations".)
+        # ----------------------------------------------------------
+        def find_candidate(name_hint: str):
+            """Returns the most-recent evaluation row matching the name hint, or None."""
+            res = (
+                client.table("evaluations")
+                .select("id, candidate_name, recommendation")
+                .ilike("candidate_name", f"%{name_hint}%")
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            return res.data[0] if res.data else None
+
+        # ----------------------------------------------------------
+        # Helper: extract a simple name guess from the query.
+        # Looks for the first multi-word run after trigger keywords.
+        # ----------------------------------------------------------
+        def extract_name(query: str) -> str:
+            import re
+            # Strip common trigger phrases to isolate the name portion
+            cleaned = re.sub(
+                r"(start onboarding for|start onboarding|onboarding for|mark|done|complete|onboarding status|onboarding checklist)",
+                "",
+                query,
+                flags=re.IGNORECASE,
+            ).strip()
+            # Remove leading filler words
+            cleaned = re.sub(r"^(for|of|candidate|the)\s+", "", cleaned, flags=re.IGNORECASE).strip()
+            # Return first 60 chars to avoid overly long names
+            return cleaned[:60] if cleaned else ""
+
+        # ----------------------------------------------------------
+        # SUB-CASE A — START ONBOARDING
+        # ----------------------------------------------------------
+        if "start onboarding" in query_lower:
+            candidate_name = extract_name(state["query"])
+
+            if not candidate_name:
+                state["onboarding_result"] = (
+                    "⚠️ I couldn't extract a candidate name from your request. "
+                    "Please use a phrase like: *'Start onboarding for Jane Doe'*."
+                )
+                state["execution_log"].append("⚠️ Onboarding: no candidate name found in query.")
+                return state
+
+            candidate_row = find_candidate(candidate_name)
+
+            if not candidate_row:
+                state["onboarding_result"] = (
+                    f"❌ No evaluation record found for **'{candidate_name}'**. "
+                    "Please ensure the candidate has been evaluated first, and use the exact name as stored."
+                )
+                state["execution_log"].append(f"❌ Onboarding: candidate '{candidate_name}' not found in evaluations.")
+                return state
+                
+            if candidate_row.get("recommendation") != "Selected":
+                state["onboarding_result"] = (
+                    f"⚠️ {candidate_row['candidate_name']}'s recommendation is currently "
+                    f"'{candidate_row.get('recommendation')}', not 'Selected'. Onboarding can "
+                    "only be started for selected candidates."
+                )
+                state["execution_log"].append(f"⚠️ Onboarding: candidate '{candidate_row['candidate_name']}' is not Selected.")
+                return state
+
+            cand_id = candidate_row["id"]
+            cand_display = candidate_row["candidate_name"]
+            state["candidate_id"] = cand_id
+
+            # Insert 5 default checklist rows
+            rows = [
+                {"candidate_id": cand_id, "task_name": task, "status": "PENDING"}
+                for task in DEFAULT_ONBOARDING_TASKS
+            ]
+            client.table("onboarding_checklists").insert(rows).execute()
+
+            checklist_md = f"## ✅ Onboarding Started: {cand_display}\n\n"
+            checklist_md += "| Task | Status |\n|------|--------|\n"
+            for task in DEFAULT_ONBOARDING_TASKS:
+                checklist_md += f"| {task} | ⏳ PENDING |\n"
+
+            state["onboarding_result"] = checklist_md
+            state["execution_log"].append(f"✅ Onboarding started for {cand_display} (id={cand_id}).")
+
+        # ----------------------------------------------------------
+        # SUB-CASE B — MARK TASK DONE / COMPLETE
+        # ----------------------------------------------------------
+        elif "mark" in query_lower and any(w in query_lower for w in ["done", "complete"]):
+            import re
+            match = re.search(r"mark (.+?) (?:done|complete)(?:\s+for\s+(.+))?", state["query"], re.IGNORECASE)
+            if match:
+                task_keywords = match.group(1).strip()
+                candidate_name_raw = match.group(2).strip() if match.group(2) else None
+            else:
+                task_keywords = None
+                candidate_name_raw = None
+
+            if not candidate_name_raw:
+                state["onboarding_result"] = (
+                    "⚠️ I couldn't determine which candidate you mean. "
+                    "Try: *'Mark IT equipment setup done for Jane Doe'*."
+                )
+                state["execution_log"].append("⚠️ Onboarding update: no candidate name found.")
+                return state
+
+            candidate_row = find_candidate(candidate_name_raw)
+
+            if not candidate_row:
+                state["onboarding_result"] = (
+                    f"❌ No evaluation record found for **'{candidate_name_raw}'**. "
+                    "Please check the candidate name and try again."
+                )
+                state["execution_log"].append(f"❌ Onboarding update: candidate '{candidate_name_raw}' not found.")
+                return state
+
+            cand_id = candidate_row["id"]
+            cand_display = candidate_row["candidate_name"]
+            state["candidate_id"] = cand_id
+
+            # Fetch existing checklist rows for this candidate
+            rows_res = (
+                client.table("onboarding_checklists")
+                .select("id, task_name, status")
+                .eq("candidate_id", cand_id)
+                .execute()
+            )
+            if not rows_res.data:
+                state["onboarding_result"] = (
+                    f"⚠️ No onboarding checklist found for **{cand_display}**. "
+                    f"Start onboarding first with: *'Start onboarding for {cand_display}'*."
+                )
+                state["execution_log"].append(f"⚠️ Onboarding update: no checklist rows for {cand_display}.")
+                return state
+
+            # Fuzzy-match: find the task whose name best matches query keywords
+            matched_row = None
+            best_score = 0
+            for row in rows_res.data:
+                task_words = set(row["task_name"].lower().split())
+                query_words = set(task_keywords.lower().split()) if task_keywords else set()
+                overlap = len(task_words & query_words)
+                if overlap > best_score:
+                    best_score = overlap
+                    matched_row = row
+
+            if not matched_row or best_score == 0:
+                task_list = ", ".join(r["task_name"] for r in rows_res.data)
+                state["onboarding_result"] = (
+                    f"⚠️ Couldn't match a task in your query. Available tasks for **{cand_display}**: {task_list}."
+                )
+                state["execution_log"].append("⚠️ Onboarding update: no task matched query keywords.")
+                return state
+
+            # Update matched task to DONE
+            client.table("onboarding_checklists").update(
+                {"status": "DONE", "completed_at": "now()"}
+            ).eq("id", matched_row["id"]).execute()
+
+            state["onboarding_result"] = (
+                f"✅ Marked **'{matched_row['task_name']}'** as **DONE** for **{cand_display}**."
+            )
+            state["execution_log"].append(
+                f"✅ Onboarding: '{matched_row['task_name']}' marked DONE for {cand_display}."
+            )
+
+        # ----------------------------------------------------------
+        # SUB-CASE C — STATUS / CHECKLIST
+        # ----------------------------------------------------------
+        else:
+            candidate_name = extract_name(state["query"])
+
+            if not candidate_name:
+                state["onboarding_result"] = (
+                    "⚠️ Please include the candidate name in your request. "
+                    "Try: *'Onboarding status for Jane Doe'*."
+                )
+                state["execution_log"].append("⚠️ Onboarding status: no candidate name found.")
+                return state
+
+            candidate_row = find_candidate(candidate_name)
+
+            if not candidate_row:
+                state["onboarding_result"] = (
+                    f"❌ No evaluation record found for **'{candidate_name}'**."
+                )
+                state["execution_log"].append(f"❌ Onboarding status: candidate '{candidate_name}' not found.")
+                return state
+
+            cand_id = candidate_row["id"]
+            cand_display = candidate_row["candidate_name"]
+            state["candidate_id"] = cand_id
+
+            rows_res = (
+                client.table("onboarding_checklists")
+                .select("task_name, status, completed_at")
+                .eq("candidate_id", cand_id)
+                .order("created_at", desc=False)
+                .execute()
+            )
+
+            if not rows_res.data:
+                state["onboarding_result"] = (
+                    f"⚠️ No onboarding checklist found for **{cand_display}**. "
+                    f"Start one with: *'Start onboarding for {cand_display}'*."
+                )
+                state["execution_log"].append(f"⚠️ Onboarding status: no checklist rows for {cand_display}.")
+                return state
+
+            status_md = f"## 📋 Onboarding Checklist: {cand_display}\n\n"
+            status_md += "| Task | Status |\n|------|--------|\n"
+            for row in rows_res.data:
+                icon = "✅" if row["status"] == "DONE" else "⏳"
+                status_md += f"| {row['task_name']} | {icon} {row['status']} |\n"
+
+            state["onboarding_result"] = status_md
+            state["execution_log"].append(f"📋 Onboarding status displayed for {cand_display}.")
+
+    except Exception as e:
+        state["onboarding_result"] = (
+            f"⚠️ Onboarding action could not be completed.\n\nError: {str(e)}"
+        )
+        state["execution_log"].append(f"❌ Onboarding Specialist failed: {e}")
+
+    return state
+
+
+# ==========================================
 # Final Response
 # ==========================================
 
@@ -337,13 +596,28 @@ def final_response(state: AgentState):
 
             # Save to Supabase
             try:
-                from app.utils.dependencies import get_backend_container
+                from app.utils.dependencies import get_backend_container, get_session_manager
                 container = get_backend_container()
                 supabase_service = container["supabase_service"]
-                
+
+                # BUG FIX: resolve candidate_name from LLM output instead of hardcoding
+                candidate_name = eval_data.get("candidate_name") or "Unknown Candidate"
+
+                # BUG FIX: use profile.auth_user_id (FK to auth.users(id)), not profile.id
+                # (profile.id is the public.profiles PK — a different UUID)
+                auth_user_id = None
+                try:
+                    session_manager = get_session_manager()
+                    profile = session_manager.get_current_profile()
+                    if profile:
+                        auth_user_id = profile.auth_user_id
+                except Exception:
+                    pass  # created_by remains None; insert still proceeds without it
+
                 db_payload = {
-                    "candidate_name": "Unknown (Parsed from Resume)",
-                    "email": "unknown@example.com",
+                    "candidate_name": candidate_name,
+                    # BUG FIX: omit fake placeholder email; leave null unless the model
+                    # extracts a real one (CandidateEvaluation has no candidate_email field)
                     "applied_role": role,
                     "ats_score": pct,
                     "overall_score": pct,
@@ -352,8 +626,13 @@ def final_response(state: AgentState):
                     "weaknesses": [],
                     "missing_skills": [],
                     "interview_questions": questions,
-                    "evaluation_json": eval_data
+                    "evaluation_json": eval_data,
                 }
+
+                # Only include created_by if we have a valid auth UID
+                if auth_user_id:
+                    db_payload["created_by"] = auth_user_id
+
                 supabase_service.insert_evaluation(db_payload)
             except Exception as e:
                 import logging
@@ -365,6 +644,9 @@ def final_response(state: AgentState):
     elif state["intent"] == "general":
         # Pass through the answer generated by general_assistant
         pass
+
+    elif state["intent"] == "onboarding":
+        state["final_answer"] = state.get("onboarding_result", "Onboarding action completed.")
 
     else:
         state["final_answer"] = "Task Completed."

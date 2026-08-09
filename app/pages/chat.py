@@ -662,6 +662,42 @@ OUTPUT RULES (strictly enforced):
             print(f"Detected Match: {result.match_percentage}%")
             print(f"Recommendation: {result.recommendation}")
             print("-" * 33)
+            
+            # Save to Supabase (so bulk candidates exist for onboarding lookup)
+            try:
+                from app.utils.dependencies import get_session_manager
+                auth_user_id = None
+                try:
+                    session_manager = get_session_manager()
+                    profile = session_manager.get_current_profile()
+                    if profile:
+                        auth_user_id = profile.auth_user_id
+                except Exception:
+                    pass
+
+                db_payload = {
+                    "candidate_name": candidate_name,
+                    "applied_role": role_name,
+                    "ats_score": result.match_percentage,
+                    "overall_score": result.match_percentage,
+                    "recommendation": result.recommendation,
+                    "strengths": [],
+                    "weaknesses": [],
+                    "missing_skills": [],
+                    "interview_questions": result.suggested_questions or [],
+                    "evaluation_json": result.model_dump(),
+                }
+                if auth_user_id:
+                    db_payload["created_by"] = auth_user_id
+
+                from app.utils.dependencies import get_backend_container
+                container = get_backend_container()
+                supabase_service = container["supabase_service"]
+                supabase_service.insert_evaluation(db_payload)
+            except Exception as e:
+                import logging
+                logging.error(f"Failed to insert bulk evaluation: {e}")
+
             results.append({
                 "candidate_name": candidate_name,
                 "match_percentage": result.match_percentage,
@@ -706,6 +742,10 @@ def format_bulk_ranking_report(results: list, role_name: str):
             f"| {r['match_percentage']}% "
             f"| {emoji} {r['recommendation']} |"
         )
+
+    selected_names = [r["candidate_name"] for r in sorted_results if r["recommendation"] == "Selected"]
+    if selected_names:
+        lines.append(f"\n💡 {', '.join(selected_names)} {'was' if len(selected_names)==1 else 'were'} selected — want me to start onboarding for any of them? Just ask, e.g. \"start onboarding for {selected_names[0]}\".")
 
     return "\n".join(lines), sorted_results
 
@@ -948,7 +988,8 @@ if query:
         "general": "GENERAL",
         "resume": "RESUME",
         "recruitment": "RESUME",
-        "email": "EMAIL"
+        "email": "EMAIL",
+        "onboarding": "GENERAL",  # Maps to GENERAL; agent_type enum does not include ONBOARDING
     }
     db_agent_used = intent_map.get(result.get("intent", "general"), "GENERAL")
     
@@ -986,6 +1027,9 @@ if query:
 
             if result["recommendation"].lower() == "selected":
                 st.success("✅ Candidate Shortlisted")
+                offer_text = f"💡 Want me to start onboarding for **{result.get('evaluation_data', {}).get('candidate_name', 'this candidate')}**? Just ask — e.g. \"start onboarding for {result.get('evaluation_data', {}).get('candidate_name', '')}\"."
+                st.markdown(offer_text)
+                answer += f"\n\n{offer_text}"
             else:
                 st.error("❌ Candidate Rejected")
 

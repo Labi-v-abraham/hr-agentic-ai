@@ -4,6 +4,7 @@ from app.agents.graph.state import AgentState
 from app.utils.config import get_llm
 from app.models.models import CandidateEvaluation
 from app.agents.rag.retriever import get_retriever
+from app.prompts.loader import render_prompt
 
 # ==========================================
 # Candidate Evaluation Specialist
@@ -45,6 +46,28 @@ def candidate_evaluator(state: AgentState):
         
         docs_and_scores = vs.similarity_search_with_score(state["query"], k=10, filter={"knowledge_base_id": {"$in": [kb_id]}})
         documents = [d for d, s in docs_and_scores]
+
+        # --- RAG citation / confidence (additive) ---
+        if docs_and_scores:
+            avg_score = sum(s for _, s in docs_and_scores) / len(docs_and_scores)
+            source_files = sorted(set(doc.metadata.get('filename', 'Unknown') for doc, _ in docs_and_scores))
+        else:
+            avg_score = 0
+            source_files = []
+
+        if avg_score >= 0.75:
+            confidence_badge = "🟢 High Confidence"
+        elif avg_score >= 0.5:
+            confidence_badge = "🟡 Medium Confidence"
+        else:
+            confidence_badge = "🔴 Low Confidence"
+
+        knowledge_gap_flag = (not docs_and_scores) or (avg_score < 0.4)
+
+        state["source_files"] = source_files
+        state["confidence_badge"] = confidence_badge
+        state["knowledge_gap"] = knowledge_gap_flag
+        # --- end RAG citation / confidence ---
         
         print("\nChunks Retrieved:")
         print(len(documents))
@@ -80,33 +103,13 @@ def candidate_evaluator(state: AgentState):
                 for doc in documents
             )
             
-        prompt = f"""You are a Senior HR Recruitment Specialist.
-
-Evaluate the resume below against the role: {state.get('current_role', 'General Candidate')}
-
-RESUME:
-{state["resume_text"]}
-{kb_context}
-
-REQUEST:
-{state["query"]}
-
-OUTPUT RULES (strictly enforced):
-1. match_percentage: integer 0-100.
-2. recommendation: MUST be exactly one of "Selected", "Rejected", or "Hold". No other wording.
-3. analysis: 2-4 sentences ONLY. Summarise key fit factors and major gaps. \
-   Do NOT include interview questions, coaching tips, or candidate-facing text here.
-4. suggested_questions: at most 5 short interview questions targeted at this candidate's \
-   specific gaps. Leave empty if none are warranted.
-5. final_answer: ONE sentence (max 25 words) suitable as a chat reply, \
-   e.g. "The candidate is a moderate match for the {state.get('current_role', 'role')} role with {'{match_percentage}'}% alignment."
-6. scorecard: Break down the evaluation into 3-6 specific criteria relevant to THIS role \
-   (derive criteria from the role knowledge base content provided above, not a generic fixed list). \
-   Each criterion needs a 0-100 score and a one-sentence justification grounded in the resume \
-   and role requirements.
-7. candidate_name: Extract the candidate's full name from the resume header or contact section. \
-   If no name is clearly present, use "Unknown Candidate".
-"""
+        prompt = render_prompt(
+            "resume_evaluation.j2",
+            current_role=state.get('current_role', 'General Candidate'),
+            resume_text=state["resume_text"],
+            kb_context=kb_context,
+            query=state["query"],
+        )
 
         result = structured_llm.invoke(prompt)
 
@@ -141,35 +144,12 @@ def interview_email_generator(state: AgentState):
     for shortlisted candidates.
     """
 
-    prompt = f"""
-You are an HR Communication Specialist.
-
-Generate a professional interview invitation email based on the candidate evaluation.
-
-Candidate Evaluation:
-
-{state["analysis"]}
-
-Candidate Match Percentage:
-{state["match_percentage"]}%
-
-Recommendation:
-{state["recommendation"]}
-
-Instructions:
-
-- Congratulate the candidate.
-- Mention they have been shortlisted.
-- Invite them for an interview.
-- Keep the email professional and friendly.
-- Include placeholders for:
-    - Company Name
-    - Interview Date
-    - Interview Time
-    - Interview Mode (Online/Offline)
-    - HR Contact
-- End with a professional closing.
-"""
+    prompt = render_prompt(
+        "interview_email.j2",
+        analysis=state["analysis"],
+        match_percentage=state["match_percentage"],
+        recommendation=state["recommendation"],
+    )
 
     try:
         response = get_llm().invoke(prompt)
@@ -223,6 +203,28 @@ def hr_policy_specialist(state: AgentState):
         # Using similarity search directly to get scores
         docs_and_scores = vs.similarity_search_with_score(state["query"], k=10, filter={"knowledge_base_id": {"$in": [kb_id]}})
         documents = [d for d, s in docs_and_scores]
+
+        # --- RAG citation / confidence (additive) ---
+        if docs_and_scores:
+            avg_score = sum(s for _, s in docs_and_scores) / len(docs_and_scores)
+            source_files = sorted(set(doc.metadata.get('filename', 'Unknown') for doc, _ in docs_and_scores))
+        else:
+            avg_score = 0
+            source_files = []
+
+        if avg_score >= 0.75:
+            confidence_badge = "🟢 High Confidence"
+        elif avg_score >= 0.5:
+            confidence_badge = "🟡 Medium Confidence"
+        else:
+            confidence_badge = "🔴 Low Confidence"
+
+        knowledge_gap_flag = (not docs_and_scores) or (avg_score < 0.4)
+
+        state["source_files"] = source_files
+        state["confidence_badge"] = confidence_badge
+        state["knowledge_gap"] = knowledge_gap_flag
+        # --- end RAG citation / confidence ---
         
         print("\nChunks Retrieved:")
         print(len(documents))
@@ -251,24 +253,11 @@ def hr_policy_specialist(state: AgentState):
             for doc in documents
         )
 
-        prompt = f"""
-You are an HR Policy Specialist.
-
-Answer ONLY using the provided Employee Handbook context.
-
-If the exact answer is not present but related information exists, summarize it instead.
-Do NOT say "I couldn't find this information" unless no relevant information is provided in the context at all.
-
-Employee Handbook Context:
-
-{context}
-
-Question:
-
-{state["query"]}
-
-Provide a clear and professional answer.
-"""
+        prompt = render_prompt(
+            "hr_policy.j2",
+            context=context,
+            query=state["query"],
+        )
         print("\nPrompt sent to LLM:")
         print(prompt)
 
@@ -560,6 +549,247 @@ def onboarding_specialist(state: AgentState):
 
 
 # ==========================================
+# Leave Request Specialist
+# ==========================================
+
+def leave_specialist(state: AgentState):
+    """
+    Leave Request Specialist
+
+    Handles four sub-cases driven by query content:
+      - APPLY   : "apply for leave" / "request time off" / "request leave" — creates a leave request.
+      - STATUS  : "leave status" / "my leave" — shows the current user's own leave requests.
+      - PENDING : "pending leave requests" — shows all pending requests (managers/admins only).
+      - APPROVE/REJECT : "approve leave" / "reject leave" — approves or rejects a specific request.
+    """
+
+    query_lower = state["query"].lower()
+
+    try:
+        from app.utils.dependencies import get_backend_container, get_session_manager, get_authorization_service
+        client = get_backend_container()["supabase_service"].get_admin_client()
+        session_manager = get_session_manager()
+        authz = get_authorization_service()
+        profile = session_manager.get_current_profile()
+
+        if not profile:
+            state["leave_result"] = "⚠️ You must be logged in to use leave features."
+            state["execution_log"].append("⚠️ Leave: no authenticated profile.")
+            return state
+
+        # ----------------------------------------------------------
+        # SUB-CASE A — APPLY FOR LEAVE
+        # ----------------------------------------------------------
+        if any(phrase in query_lower for phrase in ["apply for leave", "request time off", "request leave"]):
+            if not authz.can_apply_leave():
+                state["leave_result"] = "❌ You do not have permission to apply for leave."
+                state["execution_log"].append("❌ Leave apply: permission denied.")
+                return state
+
+            # Use LLM to extract leave details
+            from app.models.models import LeaveExtraction
+            structured_llm = get_llm().with_structured_output(LeaveExtraction)
+
+            extraction_prompt = render_prompt(
+                "leave_extraction.j2",
+                query=state["query"],
+            )
+            extraction = structured_llm.invoke(extraction_prompt)
+
+            if not extraction.start_date or not extraction.end_date:
+                state["leave_result"] = (
+                    "⚠️ I couldn't determine the leave dates from your request. "
+                    "Please specify start and end dates clearly, e.g.: "
+                    "*'Apply for sick leave from 2025-03-10 to 2025-03-12 for medical appointment'*."
+                )
+                state["execution_log"].append("⚠️ Leave apply: missing dates in extraction.")
+                return state
+
+            # Insert into leave_requests
+            leave_payload = {
+                "employee_id": str(profile.id),
+                "leave_type": extraction.leave_type,
+                "start_date": extraction.start_date,
+                "end_date": extraction.end_date,
+                "reason": extraction.reason or "Not specified",
+                "status": "PENDING",
+            }
+            client.table("leave_requests").insert(leave_payload).execute()
+
+            state["leave_result"] = (
+                f"## ✅ Leave Request Submitted\n\n"
+                f"- **Type:** {extraction.leave_type}\n"
+                f"- **From:** {extraction.start_date}\n"
+                f"- **To:** {extraction.end_date}\n"
+                f"- **Reason:** {extraction.reason or 'Not specified'}\n"
+                f"- **Status:** ⏳ PENDING\n\n"
+                f"Your manager will review this request."
+            )
+            state["execution_log"].append(f"✅ Leave request submitted: {extraction.leave_type} ({extraction.start_date} to {extraction.end_date}).")
+
+        # ----------------------------------------------------------
+        # SUB-CASE D — APPROVE / REJECT LEAVE (checked before STATUS
+        #              to prevent "approve leave" matching STATUS)
+        # ----------------------------------------------------------
+        elif any(phrase in query_lower for phrase in ["approve leave", "reject leave"]):
+            if not authz.can_approve_leave():
+                state["leave_result"] = "❌ You do not have permission to approve or reject leave requests. Only HR Managers and Admins can do this."
+                state["execution_log"].append("❌ Leave approve/reject: permission denied.")
+                return state
+
+            action = "APPROVED" if "approve" in query_lower else "REJECTED"
+            action_verb = "approved" if action == "APPROVED" else "rejected"
+
+            # Extract employee name using the same pattern as onboarding_specialist
+            import re
+            cleaned = re.sub(
+                r"(approve leave|reject leave|approve|reject|for|request|of|the)",
+                "",
+                state["query"],
+                flags=re.IGNORECASE,
+            ).strip()
+            employee_name = cleaned[:60] if cleaned else ""
+
+            if not employee_name:
+                state["leave_result"] = (
+                    "⚠️ I couldn't determine which employee's leave to process. "
+                    "Please try: *'Approve leave for John Doe'*."
+                )
+                state["execution_log"].append("⚠️ Leave approve/reject: no employee name found.")
+                return state
+
+            # Fuzzy-match employee name in profiles (same ilike pattern as onboarding's find_candidate)
+            emp_res = (
+                client.table("profiles")
+                .select("id, name")
+                .ilike("name", f"%{employee_name}%")
+                .limit(1)
+                .execute()
+            )
+
+            if not emp_res.data:
+                state["leave_result"] = f"❌ No employee found matching **'{employee_name}'**. Please check the name and try again."
+                state["execution_log"].append(f"❌ Leave approve/reject: employee '{employee_name}' not found.")
+                return state
+
+            emp = emp_res.data[0]
+
+            # Find most recent PENDING leave request for this employee
+            lr_res = (
+                client.table("leave_requests")
+                .select("id, leave_type, start_date, end_date")
+                .eq("employee_id", emp["id"])
+                .eq("status", "PENDING")
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+
+            if not lr_res.data:
+                state["leave_result"] = f"⚠️ No pending leave requests found for **{emp['name']}**."
+                state["execution_log"].append(f"⚠️ Leave approve/reject: no pending requests for {emp['name']}.")
+                return state
+
+            lr = lr_res.data[0]
+            client.table("leave_requests").update({
+                "status": action,
+                "reviewed_by": str(profile.id),
+                "reviewed_at": "now()",
+            }).eq("id", lr["id"]).execute()
+
+            emoji = "✅" if action == "APPROVED" else "❌"
+            state["leave_result"] = (
+                f"## {emoji} Leave Request {action}\n\n"
+                f"- **Employee:** {emp['name']}\n"
+                f"- **Type:** {lr['leave_type']}\n"
+                f"- **Period:** {lr['start_date']} to {lr['end_date']}\n"
+                f"- **Decision:** {action}\n"
+                f"- **Reviewed by:** {profile.name}"
+            )
+            state["execution_log"].append(f"{emoji} Leave {action_verb} for {emp['name']}.")
+
+        # ----------------------------------------------------------
+        # SUB-CASE C — LIST PENDING LEAVE REQUESTS (managers/admins)
+        # ----------------------------------------------------------
+        elif "pending leave" in query_lower or ("pending" in query_lower and "leave" in query_lower):
+            if not authz.can_approve_leave():
+                state["leave_result"] = "❌ You do not have permission to view pending leave requests. Only HR Managers and Admins can do this."
+                state["execution_log"].append("❌ Leave pending list: permission denied.")
+                return state
+
+            pending_res = (
+                client.table("leave_requests")
+                .select("id, employee_id, leave_type, start_date, end_date, reason, created_at")
+                .eq("status", "PENDING")
+                .order("created_at", desc=False)
+                .execute()
+            )
+
+            if not pending_res.data:
+                state["leave_result"] = "✅ No pending leave requests at this time."
+                state["execution_log"].append("📋 Leave pending list: none found.")
+                return state
+
+            # Join with profiles to get employee names
+            emp_ids = list(set(r["employee_id"] for r in pending_res.data))
+            profiles_res = (
+                client.table("profiles")
+                .select("id, name")
+                .in_("id", emp_ids)
+                .execute()
+            )
+            name_map = {p["id"]: p["name"] for p in profiles_res.data} if profiles_res.data else {}
+
+            md = "## 📋 Pending Leave Requests\n\n"
+            md += "| # | Employee | Type | From | To | Reason |\n"
+            md += "|---|----------|------|------|----|--------|\n"
+            for i, lr in enumerate(pending_res.data, 1):
+                emp_name = name_map.get(lr["employee_id"], "Unknown")
+                reason = lr.get("reason", "N/A") or "N/A"
+                md += f"| {i} | {emp_name} | {lr['leave_type']} | {lr['start_date']} | {lr['end_date']} | {reason} |\n"
+
+            state["leave_result"] = md
+            state["execution_log"].append(f"📋 Displayed {len(pending_res.data)} pending leave request(s).")
+
+        # ----------------------------------------------------------
+        # SUB-CASE B — MY LEAVE STATUS (own requests only)
+        # ----------------------------------------------------------
+        else:
+            my_res = (
+                client.table("leave_requests")
+                .select("leave_type, start_date, end_date, status, reason, created_at")
+                .eq("employee_id", str(profile.id))
+                .order("created_at", desc=True)
+                .execute()
+            )
+
+            if not my_res.data:
+                state["leave_result"] = "ℹ️ You have no leave requests on record."
+                state["execution_log"].append("📋 Leave status: no requests found for current user.")
+                return state
+
+            md = "## 📋 My Leave Requests\n\n"
+            md += "| # | Type | From | To | Status | Reason |\n"
+            md += "|---|------|------|----|--------|--------|\n"
+            status_icons = {"PENDING": "⏳", "APPROVED": "✅", "REJECTED": "❌"}
+            for i, lr in enumerate(my_res.data, 1):
+                icon = status_icons.get(lr["status"], "")
+                reason = lr.get("reason", "N/A") or "N/A"
+                md += f"| {i} | {lr['leave_type']} | {lr['start_date']} | {lr['end_date']} | {icon} {lr['status']} | {reason} |\n"
+
+            state["leave_result"] = md
+            state["execution_log"].append(f"📋 Displayed {len(my_res.data)} leave request(s) for current user.")
+
+    except Exception as e:
+        state["leave_result"] = (
+            f"⚠️ Leave action could not be completed.\n\nError: {str(e)}"
+        )
+        state["execution_log"].append(f"❌ Leave Specialist failed: {e}")
+
+    return state
+
+
+# ==========================================
 # Final Response
 # ==========================================
 
@@ -567,6 +797,16 @@ def final_response(state: AgentState):
 
     if state["intent"] == "policy":
         state["final_answer"] = state["policy"]
+
+        # --- RAG citation / confidence section (additive) ---
+        if state.get("knowledge_gap"):
+            state["final_answer"] += "\n\n⚠️ **Knowledge Gap** — the knowledge base may not have enough relevant content to answer this confidently."
+        elif state.get("confidence_badge"):
+            state["final_answer"] += f"\n\n{state['confidence_badge']}"
+
+        if state.get("source_files"):
+            state["final_answer"] += "\n\n📄 **Sources:** " + ", ".join(state["source_files"])
+        # --- end RAG citation / confidence section ---
 
     elif state["intent"] == "email":
         state["final_answer"] = state["email"]
@@ -593,6 +833,16 @@ def final_response(state: AgentState):
                 report += f"\n---\n\n## Interview Invitation Email\n\n{state['email']}"
 
             state["final_answer"] = report
+
+            # --- RAG citation / confidence section (additive) ---
+            if state.get("knowledge_gap"):
+                state["final_answer"] += "\n\n⚠️ **Knowledge Gap** — the knowledge base may not have enough relevant content to answer this confidently."
+            elif state.get("confidence_badge"):
+                state["final_answer"] += f"\n\n{state['confidence_badge']}"
+
+            if state.get("source_files"):
+                state["final_answer"] += "\n\n📄 **Sources:** " + ", ".join(state["source_files"])
+            # --- end RAG citation / confidence section ---
 
             # Save to Supabase
             try:
@@ -647,6 +897,9 @@ def final_response(state: AgentState):
 
     elif state["intent"] == "onboarding":
         state["final_answer"] = state.get("onboarding_result", "Onboarding action completed.")
+
+    elif state["intent"] == "leave":
+        state["final_answer"] = state.get("leave_result", "Leave request processed.")
 
     else:
         state["final_answer"] = "Task Completed."

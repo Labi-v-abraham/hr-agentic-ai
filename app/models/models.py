@@ -63,3 +63,22 @@ class CandidateEvaluation(BaseModel):
             "Example: 'The candidate is a strong match for the React Developer role with 78% alignment.'"
         )
     )
+
+
+class LeaveExtraction(BaseModel):
+    leave_type: str = Field(
+        default="General",
+        description="Type of leave requested, e.g. 'Sick Leave', 'Vacation', 'Personal', 'General'."
+    )
+    start_date: Optional[str] = Field(
+        default=None,
+        description="Start date in YYYY-MM-DD format. Must be null if not clearly stated in the query."
+    )
+    end_date: Optional[str] = Field(
+        default=None,
+        description="End date in YYYY-MM-DD format. Must be null if not clearly stated in the query."
+    )
+    reason: Optional[str] = Field(
+        default=None,
+        description="Reason for the leave, extracted from the query. Null if not provided."
+    )

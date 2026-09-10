@@ -53,3 +53,9 @@ class AuthorizationService:
 
     def can_view_logs(self) -> bool:
         return self.get_current_role() == Role.HR_ADMIN
+
+    def can_apply_leave(self) -> bool:
+        return self.get_current_role() in [Role.HR_ADMIN, Role.HR_MANAGER, Role.EMPLOYEE]
+
+    def can_approve_leave(self) -> bool:
+        return self.get_current_role() in [Role.HR_ADMIN, Role.HR_MANAGER]

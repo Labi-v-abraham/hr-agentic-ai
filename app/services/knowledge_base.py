@@ -71,14 +71,41 @@ class KnowledgeBaseService:
 
 
     def upload_document(self, file_bytes: bytes, filename: str, uploader_id: str, mime_type: str, kb_name: str = "General HR") -> Tuple[bool, str]:
-        """Full pipeline: Upload to storage -> Save Metadata -> Embed into Chroma"""
+        """Full pipeline: Upload to storage -> Save Metadata -> Embed into Chroma.
+
+        If a document with the same name already exists in the same KB (is_latest=true),
+        the new upload becomes the next version: the old doc's is_latest is set to false
+        and its ChromaDB chunks are purged. Versioning errors are non-fatal (fail open).
+        """
         try:
             self._ensure_bucket_exists()
-            
-            # 1. Insert Metadata (Status: UPROCESSING)
+
+            # ── Version detection (fail-open) ──────────────────────────────
+            prev_doc = None
+            try:
+                kb_id = self.get_knowledge_base_id(kb_name)
+                prev_res = (
+                    self.supabase.table("documents")
+                    .select("id, version_number")
+                    .eq("knowledge_base_id", kb_id)
+                    .eq("name", filename)
+                    .eq("is_latest", True)
+                    .eq("is_deleted", False)
+                    .limit(1)
+                    .execute()
+                )
+                if prev_res.data:
+                    prev_doc = prev_res.data[0]
+            except Exception as ver_err:
+                logger.warning(f"Version detection failed (non-fatal): {ver_err}")
+                # kb_id may not be set yet if get_knowledge_base_id raised; fetch it cleanly
+                try:
+                    kb_id = self.get_knowledge_base_id(kb_name)
+                except Exception:
+                    raise  # propagate — we can't continue without a valid kb_id
+
+            # ── Step 1: Insert Metadata (Status: PROCESSING) ───────────────
             storage_path = f"{uuid.uuid4()}_{filename}"
-            
-            kb_id = self.get_knowledge_base_id(kb_name)
 
             db_res = self.supabase.table("documents").insert({
                 "name": filename,
@@ -91,13 +118,13 @@ class KnowledgeBaseService:
                 "status": "PROCESSING",
                 "knowledge_base_id": kb_id
             }).execute()
-            
+
             if not db_res.data:
                 return False, "Failed to insert document metadata."
-                
+
             doc_id = db_res.data[0]["id"]
 
-            # 2. Upload to Supabase Storage
+            # ── Step 2: Upload to Supabase Storage ─────────────────────────
             try:
                 self.supabase.storage.from_(self.BUCKET_NAME).upload(
                     path=storage_path,
@@ -110,11 +137,57 @@ class KnowledgeBaseService:
                 logger.error(f"Storage upload failed: {e}")
                 return False, f"Storage upload failed: {str(e)}"
 
-            # 3. Extract and Embed
+            # ── Step 3: Extract and Embed ───────────────────────────────────
             success, msg = self._extract_and_embed(doc_id, file_bytes, filename, kb_name, kb_id)
-            
+
             if success:
                 self.supabase.table("documents").update({"status": "PROCESSED"}).eq("id", doc_id).execute()
+
+                # ── Version linking + old-chunk purge (fail-open) ──────────
+                if prev_doc:
+                    try:
+                        prev_id = prev_doc["id"]
+                        prev_version = prev_doc.get("version_number") or 1
+
+                        # Stamp the new document with version metadata
+                        self.supabase.table("documents").update({
+                            "version_number": prev_version + 1,
+                            "parent_document_id": prev_id,
+                            "is_latest": True,
+                        }).eq("id", doc_id).execute()
+
+                        # Retire the previous version
+                        self.supabase.table("documents").update({
+                            "is_latest": False,
+                        }).eq("id", prev_id).execute()
+
+                        # Purge previous version's ChromaDB chunks
+                        # Uses the same pattern as delete_document():
+                        # vectorstore.get(where={"document_id": ...}) → vectorstore.delete(ids=...)
+                        try:
+                            vectorstore = self.get_vectorstore()
+                            old_items = vectorstore.get(where={"document_id": prev_id})
+                            if old_items and old_items.get("ids"):
+                                vectorstore.delete(ids=old_items["ids"])
+                                logger.info(
+                                    f"Purged {len(old_items['ids'])} stale chunks "
+                                    f"for superseded document {prev_id}"
+                                )
+                        except Exception as chroma_err:
+                            logger.error(
+                                f"Failed to purge old ChromaDB chunks for {prev_id} "
+                                f"(non-fatal): {chroma_err}"
+                            )
+
+                        logger.info(
+                            f"Document '{filename}' versioned: "
+                            f"v{prev_version} ({prev_id}) → v{prev_version + 1} ({doc_id})"
+                        )
+                    except Exception as link_err:
+                        logger.error(
+                            f"Version linking failed for doc {doc_id} (non-fatal): {link_err}"
+                        )
+
                 return True, "Document uploaded and indexed successfully."
             else:
                 self.supabase.table("documents").update({"status": "FAILED"}).eq("id", doc_id).execute()
@@ -123,6 +196,7 @@ class KnowledgeBaseService:
         except Exception as e:
             logger.error(f"Unexpected error in upload_document: {e}")
             return False, str(e)
+
 
     def _extract_and_embed(self, document_id: str, file_bytes: bytes, filename: str, kb_name: str, kb_id: str) -> Tuple[bool, str]:
         """Saves bytes to tmp file, loads with PyPDFLoader, and adds to ChromaDB with deterministic IDs."""

@@ -17,6 +17,7 @@ from app.agents.rag.retriever import (
     get_retriever,
     get_vectorstore,
 )
+from app.prompts.loader import render_prompt
 authz = get_authorization_service()
 authz.require_auth()
 
@@ -96,6 +97,35 @@ CHAT_CSS = """
 .assistant-result-card [data-testid="stMetricValue"] {
     color: #f0f0f0 !important;
 }
+
+/* ---- FIX 1: pin sidebar logout to viewport bottom ---- */
+[data-testid="stSidebar"] > div:first-child {
+    display: flex !important;
+    flex-direction: column !important;
+    height: 100% !important;
+    min-height: 100vh !important;
+    padding-bottom: 0 !important;
+}
+
+.sidebar-scrollable-content {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    min-height: 0;
+}
+
+.sidebar-fixed-footer {
+    flex: 0 0 auto;
+    position: relative;
+    background: var(--background-color, #0e1117);
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(255,255,255,0.1);
+}
+
+/* ---- FIX 2: center page title h1 ---- */
+h1 {
+    text-align: center !important;
+}
 </style>
 """
 st.markdown(CHAT_CSS, unsafe_allow_html=True)
@@ -133,6 +163,8 @@ if "request_role" not in st.session_state:
 # Sidebar: Chat History
 # ==================================================
 with st.sidebar:
+    st.markdown('<div class="sidebar-scrollable-content">', unsafe_allow_html=True)
+
     if st.button("➕ New Chat", use_container_width=True, type="primary"):
         new_id = str(uuid.uuid4())
         st.session_state.current_session_id = new_id
@@ -165,6 +197,8 @@ with st.sidebar:
     if st.button("🗑 Clear Current Chat", use_container_width=True):
         st.session_state[session_key] = []
         st.rerun()
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================================================
 # Display Chat History
@@ -628,31 +662,12 @@ def run_bulk_ranking(files, role_name: str, available_kbs: list) -> list:
                 )
 
             # Same evaluation prompt as candidate_evaluator
-            eval_prompt = f"""You are a Senior HR Recruitment Specialist.
-
-Evaluate the resume below against the role: {role_name}
-
-RESUME:
-{resume_text}
-{kb_context}
-
-REQUEST:
-Evaluate this candidate for the {role_name} role.
-
-OUTPUT RULES (strictly enforced):
-1. candidate_name: extract the candidate's full name from the resume text. Default to 'Unknown Candidate' if not found.
-2. match_percentage: integer 0-100.
-3. recommendation: MUST be exactly one of "Selected", "Rejected", or "Hold". No other wording.
-4. analysis: 2-4 sentences ONLY. Summarise key fit factors and major gaps. \
-   Do NOT include interview questions, coaching tips, or candidate-facing text here.
-5. suggested_questions: at most 5 short interview questions targeted at this candidate's \
-   specific gaps. Leave empty if none are warranted.
-6. final_answer: ONE sentence (max 25 words) suitable as a chat reply.
-7. scorecard: Break down the evaluation into 3-6 specific criteria relevant to THIS role \
-   (derive criteria from the role knowledge base content provided above, not a generic fixed list). \
-   Each criterion needs a 0-100 score and a one-sentence justification grounded in the resume \
-   and role requirements.
-"""
+            eval_prompt = render_prompt(
+                "bulk_resume_evaluation.j2",
+                role_name=role_name,
+                resume_text=resume_text,
+                kb_context=kb_context,
+            )
             result = structured_llm.invoke(eval_prompt)
             candidate_name = result.candidate_name or filename_fallback
 
@@ -763,7 +778,10 @@ if prompt and getattr(prompt, 'files', None):
         # Classify document
         from app.utils.config import get_llm
         llm = get_llm()
-        class_prompt = f"Analyze the following text from an uploaded document. Classify it EXACTLY as one of the following: 'Resume', 'Job Description', 'HR Policy', 'Employee Handbook', or 'Unknown PDF'. Return ONLY the classification name.\n\nText: {st.session_state.resume_text[:2000]}"
+        class_prompt = render_prompt(
+            "document_classification.j2",
+            text=st.session_state.resume_text[:2000],
+        )
         try:
             doc_type = llm.invoke(class_prompt).content.strip()
         except:
@@ -773,14 +791,11 @@ if prompt and getattr(prompt, 'files', None):
             # Auto-detect the best-fit role from the available knowledge bases
             detected_role = None
             try:
-                role_prompt = f"""You are matching a resume to the best-fit job role.
-
-Available roles: {', '.join(kbs)}
-
-Resume text:
-{st.session_state.resume_text[:3000]}
-
-Return ONLY the exact role name from the list above that best matches this resume. If no role is a clear match, return "General HR". Return nothing else — just the role name."""
+                role_prompt = render_prompt(
+                    "role_detection.j2",
+                    available_roles=", ".join(kbs),
+                    resume_text=st.session_state.resume_text[:3000],
+                )
                 detected = llm.invoke(role_prompt).content.strip()
                 # Validate against the actual kb list to avoid hallucinated role names
                 if detected in kbs:
@@ -835,7 +850,7 @@ Return ONLY the exact role name from the list above that best matches this resum
             st.session_state["_pending_bulk_files"] = prompt.files
             st.rerun()
         else:
-            with st.spinner(f"Ranking {len(prompt.files)} candidates for **{bulk_role}**..."):
+            with st.spinner(f"🤖 Ranking {len(prompt.files)} candidates — estimated {len(prompt.files)*8}-{len(prompt.files)*15}s..."):
                 results = run_bulk_ranking(prompt.files, bulk_role, kbs)
             report_md, sorted_results = format_bulk_ranking_report(results, bulk_role)
             chat_repo.save_message(
@@ -852,7 +867,14 @@ Return ONLY the exact role name from the list above that best matches this resum
 if "_pending_query_after_upload" in st.session_state:
     query = st.session_state.pop("_pending_query_after_upload")
 else:
-    query = prompt.text if prompt else None
+    # st.chat_input with accept_file returns a plain str for text-only input,
+    # or a ChatInputValue object (with .text/.files) when files are attached.
+    if prompt is None:
+        query = None
+    elif hasattr(prompt, "text"):
+        query = prompt.text
+    else:
+        query = prompt  # already a plain string
 
 # Handle simulated query removed
 
@@ -862,7 +884,7 @@ if query:
         bulk_role = extract_role_from_query(query, kbs)
         if bulk_role:
             pending_files = st.session_state.pop("_pending_bulk_files")
-            with st.spinner(f"Ranking {len(pending_files)} candidates for **{bulk_role}**..."):
+            with st.spinner(f"🤖 Ranking {len(pending_files)} candidates — estimated {len(pending_files)*8}-{len(pending_files)*15}s..."):
                 results = run_bulk_ranking(pending_files, bulk_role, kbs)
             report_md, sorted_results = format_bulk_ranking_report(results, bulk_role)
             chat_repo.save_message(
@@ -975,7 +997,17 @@ if query:
         "execution_log": [],
     }
 
-    with st.spinner("🤖 Thinking..."):
+    resume_keywords = ["resume", "candidate", "screen", "evaluate", "recruitment", "shortlist"]
+    if any(word in query.lower() for word in resume_keywords):
+        estimate_text = "🤖 Evaluating candidate — estimated 10-20s..."
+    elif "onboarding" in query.lower():
+        estimate_text = "🤖 Processing onboarding request — estimated 3-5s..."
+    elif any(word in query.lower() for word in ["policy", "handbook", "leave", "hr"]):
+        estimate_text = "🤖 Searching knowledge base — estimated 5-10s..."
+    else:
+        estimate_text = "🤖 Thinking — estimated 3-5s..."
+
+    with st.spinner(estimate_text):
         import time
         start_t = time.time()
         result = get_graph().invoke(state)
@@ -990,6 +1022,7 @@ if query:
         "recruitment": "RESUME",
         "email": "EMAIL",
         "onboarding": "GENERAL",  # Maps to GENERAL; agent_type enum does not include ONBOARDING
+        "leave": "GENERAL",  # Maps to GENERAL; agent_type enum does not include LEAVE
     }
     db_agent_used = intent_map.get(result.get("intent", "general"), "GENERAL")
     

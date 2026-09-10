@@ -72,6 +72,11 @@ else:
             with c1:
                 st.markdown(f"**{doc['name']}**")
                 st.caption(f"{(doc['file_size']/1024):.1f} KB")
+                # Version badge
+                ver_num = doc.get('version_number') or 1
+                is_latest = doc.get('is_latest', True)
+                badge = f"🏷️ v{ver_num} {'• Latest' if is_latest else '• Prior version'}"
+                st.caption(badge)
             
             with c2:
                 st.markdown(f"🗂️ `{kb}`")
@@ -135,3 +140,34 @@ else:
                     if d2.button("Cancel", key=f"cancel_{doc['id']}"):
                         st.session_state[f"del_{doc['id']}"] = False
                         st.rerun()
+
+            # Version History
+            parent_id = doc.get('parent_document_id')
+            if parent_id or (doc.get('version_number') or 1) > 1:
+                with st.expander("📋 Version History", expanded=False):
+                    try:
+                        from app.utils.dependencies import get_backend_container
+                        _client = get_backend_container()["supabase_service"].get_admin_client()
+                        hist_res = (
+                            _client.table("documents")
+                            .select("id, name, version_number, created_at, is_latest")
+                            .eq("name", doc['name'])
+                            .eq("knowledge_base_id", doc['knowledge_base_id'])
+                            .eq("is_deleted", False)
+                            .order("version_number", desc=True)
+                            .execute()
+                        )
+                        if hist_res.data:
+                            for row in hist_res.data:
+                                row_ver = row.get('version_number') or 1
+                                row_date = row['created_at'].split('T')[0] if row.get('created_at') else 'Unknown'
+                                row_label = '✅ Latest' if row.get('is_latest') else '🗂️ Superseded'
+                                st.markdown(
+                                    f"**v{row_ver}** — {row_date} — {row_label}"
+                                    + (" *(current)*" if row['id'] == doc['id'] else "")
+                                )
+                        else:
+                            st.caption("No version history available.")
+                    except Exception as hist_err:
+                        st.caption(f"Could not load version history: {hist_err}")
+

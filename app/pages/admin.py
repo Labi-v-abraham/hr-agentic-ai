@@ -31,6 +31,9 @@ tab1, tab2 = st.tabs(["View Users", "Create User"])
 with tab1:
     users = user_service.get_all_users()
     if users:
+        from app.models.user import Role
+
+        # Data table
         user_data = [{
             "Name": u.name,
             "Email": u.email,
@@ -42,6 +45,33 @@ with tab1:
         
         df = pd.DataFrame(user_data)
         st.dataframe(df, use_container_width=True)
+
+        # Role change controls
+        st.subheader("🔄 Change User Role")
+        role_options = [r.value for r in Role]
+        for u in users:
+            col_name, col_role, col_btn = st.columns([3, 2, 1])
+            with col_name:
+                st.markdown(f"**{u.name}** ({u.email})")
+            with col_role:
+                new_role = st.selectbox(
+                    "Role",
+                    options=role_options,
+                    index=role_options.index(u.role.value),
+                    key=f"role_select_{u.auth_user_id}",
+                    label_visibility="collapsed",
+                )
+            with col_btn:
+                if st.button("Update", key=f"role_btn_{u.auth_user_id}"):
+                    if new_role != u.role.value:
+                        success = user_service.change_user_role(u.auth_user_id, new_role)
+                        if success:
+                            st.success(f"Role for {u.name} changed to {new_role}.")
+                            st.rerun()
+                        else:
+                            st.error(f"Failed to update role for {u.name}.")
+                    else:
+                        st.info("Role is already set to the selected value.")
     else:
         st.info("No users found.")
 

@@ -65,7 +65,9 @@ else:
 pg.run()
 
 if current_profile:
+    st.sidebar.markdown('<div class="sidebar-fixed-footer">', unsafe_allow_html=True)
     st.sidebar.divider()
     if st.sidebar.button("Logout", key="logout_bottom"):
         auth_service.logout()
         st.rerun()
+    st.sidebar.markdown('</div>', unsafe_allow_html=True)

@@ -19,3 +19,9 @@ class AgentState(TypedDict):
     # Onboarding Checklist Tracker fields (additive only)
     onboarding_result: Optional[str]
     candidate_id: Optional[str]
+    # RAG citation / confidence fields (additive only)
+    source_files: Optional[list]
+    confidence_badge: Optional[str]
+    knowledge_gap: Optional[bool]
+    # Leave request fields (additive only)
+    leave_result: Optional[str]

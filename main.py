@@ -46,10 +46,24 @@ else:
     role = current_profile.role.value
     name = current_profile.name
     
-    st.sidebar.markdown(f"### 👋 Welcome, {name}")
-    st.sidebar.markdown(f"**Role:** `{role}`")
-        
-    st.sidebar.divider()
+    # Profile card
+    initials = "".join(w[0].upper() for w in name.split()[:2]) if name else "?"
+    role_colors = {
+        "HR_ADMIN": "violet",
+        "HR_MANAGER": "blue",
+        "EMPLOYEE": "green",
+    }
+    badge_color = role_colors.get(role, "gray")
+    st.sidebar.markdown(
+        f"""<div style="display:flex;align-items:center;gap:0.7rem;padding:0.5rem 0 0.75rem 0;">
+            <div style="width:40px;height:40px;border-radius:50%;background:#6366F1;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:0.95rem;color:#fff;flex-shrink:0;">{initials}</div>
+            <div style="min-width:0;">
+                <div style="font-weight:600;font-size:0.95rem;color:#e8eaed;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{name}</div>
+            </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    st.sidebar.badge(role, icon=":material/badge:", color=badge_color)
     
     pages = [chat_page]
     
@@ -66,8 +80,7 @@ pg.run()
 
 if current_profile:
     st.sidebar.markdown('<div class="sidebar-fixed-footer">', unsafe_allow_html=True)
-    st.sidebar.divider()
-    if st.sidebar.button("Logout", key="logout_bottom"):
+    if st.sidebar.button("Logout", key="logout_bottom", icon=":material/logout:", use_container_width=True):
         auth_service.logout()
         st.rerun()
     st.sidebar.markdown('</div>', unsafe_allow_html=True)

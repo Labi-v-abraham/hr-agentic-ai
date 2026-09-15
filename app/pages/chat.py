@@ -26,10 +26,10 @@ chat_repo = get_chat_repo()
 profile = session_manager.get_current_profile()
 
 st.title("🤖 HR Agentic AI - Chat")
-st.caption(f"Welcome, {profile.name}! (Role: {profile.role.value})")
 
 CHAT_CSS = """
 <style>
+/* ---- Chat bubbles ---- */
 [data-testid="stChatMessage"] {
     margin-bottom: 0.35rem !important;
     padding: 0 !important;
@@ -38,7 +38,6 @@ CHAT_CSS = """
     display: flex !important;
     width: 100% !important;
 }
-
 [data-testid="stChatMessageContent"] {
     padding: 0.65rem 1rem !important;
     border-radius: 1.1rem !important;
@@ -48,21 +47,19 @@ CHAT_CSS = """
     flex-shrink: 0;
 }
 
-/* ---- USER: right-aligned blue bubble ---- */
+/* ---- USER: right-aligned indigo bubble ---- */
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
     flex-direction: row-reverse !important;
     justify-content: flex-start !important;
 }
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) [data-testid="stChatMessageContent"] {
-    background: #2b6cb0 !important;
+    background: #4f46e5 !important;
     color: #ffffff !important;
     margin-left: auto !important;
     margin-right: 0 !important;
     border-bottom-right-radius: 0.25rem;
 }
-[data-testid="stChatMessageAvatarUser"] {
-    display: none !important;
-}
+[data-testid="stChatMessageAvatarUser"] { display: none !important; }
 
 /* ---- ASSISTANT: left-aligned dark bubble ---- */
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) {
@@ -70,15 +67,13 @@ CHAT_CSS = """
     justify-content: flex-start !important;
 }
 [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) [data-testid="stChatMessageContent"] {
-    background: #262730 !important;
-    color: #f0f0f0 !important;
+    background: #1e2130 !important;
+    color: #e8eaed !important;
     margin-right: auto !important;
     margin-left: 0 !important;
     border-bottom-left-radius: 0.25rem;
 }
-[data-testid="stChatMessageAvatarAssistant"] {
-    display: none !important;
-}
+[data-testid="stChatMessageAvatarAssistant"] { display: none !important; }
 
 [data-testid="stChatMessageContent"] p,
 [data-testid="stChatMessageContent"] li,
@@ -87,44 +82,47 @@ CHAT_CSS = """
 }
 
 .assistant-result-card {
-    background: #262730 !important;
-    border-radius: 1rem;
+    background: #1e2130 !important;
+    border-radius: 0.75rem;
     padding: 1rem 1.25rem;
     margin: 0.25rem 0 0.75rem 0;
     max-width: 62%;
 }
 .assistant-result-card [data-testid="stMetricLabel"],
 .assistant-result-card [data-testid="stMetricValue"] {
-    color: #f0f0f0 !important;
+    color: #e8eaed !important;
 }
 
-/* ---- FIX 1: pin sidebar logout to viewport bottom ---- */
-[data-testid="stSidebar"] > div:first-child {
-    display: flex !important;
-    flex-direction: column !important;
-    height: 100% !important;
-    min-height: 100vh !important;
-    padding-bottom: 0 !important;
+/* ---- Sidebar layout: fixed logout at bottom ---- */
+[data-testid="stSidebar"] .st-key-logout_bottom {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    width: 300px !important;
+    background: #141720 !important;
+    padding: 0.65rem 1rem !important;
+    border-top: 1px solid #2a2d3a !important;
+    z-index: 999 !important;
 }
 
-.sidebar-scrollable-content {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    overflow-x: hidden;
-    min-height: 0;
+/* Add bottom padding to sidebar so content doesn't hide behind fixed footer */
+section[data-testid="stSidebar"] > div:first-child {
+    padding-bottom: 56px !important;
 }
 
-.sidebar-fixed-footer {
-    flex: 0 0 auto;
-    position: relative;
-    background: var(--background-color, #0e1117);
-    padding-top: 0.5rem;
-    border-top: 1px solid rgba(255,255,255,0.1);
+/* ---- Sidebar conversation buttons ---- */
+[data-testid="stSidebar"] button {
+    transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
-/* ---- FIX 2: center page title h1 ---- */
-h1 {
-    text-align: center !important;
+/* ---- Section label in sidebar ---- */
+.sidebar-section-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #9CA3AF;
+    padding: 0.5rem 0 0.25rem 0;
 }
 </style>
 """
@@ -165,36 +163,33 @@ if "request_role" not in st.session_state:
 with st.sidebar:
     st.markdown('<div class="sidebar-scrollable-content">', unsafe_allow_html=True)
 
-    if st.button("➕ New Chat", use_container_width=True, type="primary"):
+    if st.button("New chat", use_container_width=True, type="primary", icon=":material/add:"):
         new_id = str(uuid.uuid4())
         st.session_state.current_session_id = new_id
         st.query_params["session_id"] = new_id
         st.rerun()
-        
-    st.divider()
-    st.markdown("### Recent Conversations")
-    
+
+    st.markdown('<div class="sidebar-section-label">Recent conversations</div>', unsafe_allow_html=True)
+
     sessions = chat_repo.get_sessions(profile.id)
-    
+
     if sessions:
         for sess in sessions:
             sid = sess.get("session_id")
             if not sid:
                 continue
             question = sess.get("question") or "Empty Chat"
-            title = question[:25] + ("..." if len(question) > 25 else "")
-            
-            # Highlight active conversation
+            title = question[:30] + ("…" if len(question) > 30 else "")
+
             btn_type = "primary" if sid == st.session_state.current_session_id else "secondary"
-            if st.button(f"💬 {title}", key=f"sess_{sid}", use_container_width=True, type=btn_type):
+            if st.button(title, key=f"sess_{sid}", use_container_width=True, type=btn_type, icon=":material/chat_bubble_outline:"):
                 st.session_state.current_session_id = sid
                 st.query_params["session_id"] = sid
                 st.rerun()
     else:
-        st.info("No previous conversations.")
+        st.caption("No conversations yet.")
 
-    st.divider()
-    if st.button("🗑 Clear Current Chat", use_container_width=True):
+    if st.button("Clear current chat", use_container_width=True, icon=":material/delete_outline:"):
         st.session_state[session_key] = []
         st.rerun()
 

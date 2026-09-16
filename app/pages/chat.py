@@ -817,7 +817,7 @@ if prompt and getattr(prompt, 'files', None):
                 question="[Resume Upload]",
                 response=_upload_msg,
                 agent_used="RESUME",
-                llm_used="gemini-2.5-flash"
+                llm_used="llama-3.3-70b-versatile"
             )
         elif "Job Description" in doc_type:
             st.session_state[session_key].append({"role": "assistant", "content": "Job Description detected. Please specify which knowledge base it belongs to by using the `/knowledge` command."})
@@ -854,7 +854,7 @@ if prompt and getattr(prompt, 'files', None):
                 question=prompt.text or f"Bulk resume ranking — {bulk_role}",
                 response=report_md,
                 agent_used="RESUME",
-                llm_used="gemini-2.5-flash"
+                llm_used="llama-3.3-70b-versatile"
             )
             st.session_state[session_key].append({"role": "assistant", "content": report_md, "bulk_results": sorted_results})
             st.rerun()
@@ -888,7 +888,7 @@ if query:
                 question=query or f"Bulk resume ranking — {bulk_role}",
                 response=report_md,
                 agent_used="RESUME",
-                llm_used="gemini-2.5-flash"
+                llm_used="llama-3.3-70b-versatile"
             )
             st.session_state[session_key].append({"role": "assistant", "content": report_md, "bulk_results": sorted_results})
             st.rerun()
@@ -1028,7 +1028,7 @@ if query:
         question=query,
         response=answer,
         agent_used=db_agent_used,
-        llm_used="gemini-2.5-flash"
+        llm_used="llama-3.3-70b-versatile"
     )
     
     # Debug Logging
@@ -1055,7 +1055,7 @@ if query:
 
             if result["recommendation"].lower() == "selected":
                 st.success("✅ Candidate Shortlisted")
-                offer_text = f"💡 Want me to start onboarding for **{result.get('evaluation_data', {}).get('candidate_name', 'this candidate')}**? Just ask — e.g. \"start onboarding for {result.get('evaluation_data', {}).get('candidate_name', '')}\"."
+                offer_text = f"💡 Want me to start onboarding for **{result.get('evaluation_data', {}).get('candidate_name') or 'this candidate'}**? Just ask — e.g. \"start onboarding for {result.get('evaluation_data', {}).get('candidate_name') or 'this candidate'}\"."
                 st.markdown(offer_text)
                 answer += f"\n\n{offer_text}"
             else:

@@ -14,8 +14,8 @@ def detect_intent(query: str) -> str:
         intent = result.intent.lower().strip()
         if intent in ["recruitment", "resume", "email", "policy", "general", "onboarding", "leave"]:
             return intent
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[Router] LLM intent classification failed: {e}. Falling back to keyword matching.")
 
     # Fallback keyword logic
     query_lower = query.lower()

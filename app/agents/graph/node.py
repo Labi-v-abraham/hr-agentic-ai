@@ -177,25 +177,21 @@ def hr_policy_specialist(state: AgentState):
     """
 
     try:
+        print("\n" + "=" * 50)
+        print("[HR Policy Specialist] Starting...")
+        print("=" * 50)
+
         kb_name = "General HR"
         from app.utils.dependencies import get_backend_container
         client = get_backend_container()["supabase_service"].get_admin_client()
         res_kb = client.table("knowledge_bases").select("id").eq("name", kb_name).execute()
         kb_id = res_kb.data[0]["id"] if res_kb.data else "unknown"
 
-        print("============================")
-        print("REQUEST")
-        print("============================")
-        print("\nIntent:")
-        print("policy")
-        print("\nKnowledge Base:")
-        print(kb_name)
-        print("\nKnowledge Base ID:")
-        print(kb_id)
-        print("\n{")
-        print("    \"knowledge_base_id\":")
-        print(f"    \"{kb_id}\"")
-        print("}")
+        print(f"[Retriever Loaded] KB='{kb_name}', KB_ID='{kb_id}'")
+
+        print("\nIntent: policy")
+        print(f"Knowledge Base: {kb_name}")
+        print(f"Knowledge Base ID: {kb_id}")
 
         from app.agents.rag.retriever import get_vectorstore
         vs = get_vectorstore()
@@ -226,12 +222,13 @@ def hr_policy_specialist(state: AgentState):
         state["knowledge_gap"] = knowledge_gap_flag
         # --- end RAG citation / confidence ---
         
-        print("\nChunks Retrieved:")
-        print(len(documents))
+        print(f"\n[Documents Indexed: {vs._collection.count()}]")
+        print(f"[Retrieved Chunks: {len(documents)}]")
         
         if not documents:
-            print("\nNo chunks retrieved.")
-            state["policy"] = "No information found"
+            print("[WARNING] No chunks retrieved for this query.")
+            state["policy"] = "No information found in the knowledge base for this query."
+            state["execution_log"].append("⚠️ HR Policy Specialist: no relevant chunks found.")
             return state
 
         docs_names = list(set(doc.metadata.get('filename', 'Unknown') for doc in documents))
@@ -258,18 +255,20 @@ def hr_policy_specialist(state: AgentState):
             context=context,
             query=state["query"],
         )
-        print("\nPrompt sent to LLM:")
-        print(prompt)
+        print("\n[LLM Selection] Invoking get_llm() for policy response...")
 
         response = get_llm().invoke(prompt)
         
-        print("\nLLM output:")
-        print(response.content)
+        print(f"[Response Generated] Length={len(response.content)} chars")
+        print(f"[LLM Output Preview] {response.content[:200]}...")
 
         state["policy"] = response.content
         state["execution_log"].append("📚 HR Policy Specialist answered handbook question.")
 
     except Exception as e:
+        print(f"\n[ERROR] HR Policy Specialist failed: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
 
         state["policy"] = (
             "Unable to retrieve HR policy information.\n\n"
@@ -283,10 +282,15 @@ def hr_policy_specialist(state: AgentState):
 # ==========================================
 
 def general_assistant(state: AgentState):
-
-    response = get_llm().invoke(state["query"])
-
-    state["final_answer"] = response.content
+    try:
+        print("\n[General Assistant] Invoking LLM...")
+        response = get_llm().invoke(state["query"])
+        state["final_answer"] = response.content
+        print(f"[General Assistant] Response generated ({len(response.content)} chars)")
+    except Exception as e:
+        print(f"[ERROR] General Assistant failed: {type(e).__name__}: {e}")
+        state["final_answer"] = f"I'm sorry, I encountered an error processing your request.\n\nError: {str(e)}"
+        state["execution_log"].append(f"❌ General Assistant failed: {e}")
 
     return state
 
@@ -411,13 +415,34 @@ def onboarding_specialist(state: AgentState):
         # ----------------------------------------------------------
         elif "mark" in query_lower and any(w in query_lower for w in ["done", "complete"]):
             import re
-            match = re.search(r"mark (.+?) (?:done|complete)(?:\s+for\s+(.+))?", state["query"], re.IGNORECASE)
-            if match:
-                task_keywords = match.group(1).strip()
-                candidate_name_raw = match.group(2).strip() if match.group(2) else None
-            else:
+            task_keywords = None
+            candidate_name_raw = None
+            try:
+                extraction_prompt = render_prompt(
+                    "onboarding_task_extraction.j2",
+                    query=state["query"],
+                )
+                llm_result = get_llm().invoke(extraction_prompt).content.strip()
+                lines = llm_result.split("\n")
+                for line in lines:
+                    if line.startswith("TASK:"):
+                        val = line.replace("TASK:", "").strip()
+                        if val and val.upper() != "UNKNOWN":
+                            task_keywords = val
+                    elif line.startswith("CANDIDATE:"):
+                        val = line.replace("CANDIDATE:", "").strip()
+                        if val and val.upper() != "UNKNOWN":
+                            candidate_name_raw = val
+            except Exception:
                 task_keywords = None
                 candidate_name_raw = None
+
+            # Fallback to the existing regex if LLM extraction didn't produce both values
+            if not task_keywords or not candidate_name_raw:
+                match = re.search(r"mark (.+?) (?:done|complete)(?:\s+for\s+(.+))?", state["query"], re.IGNORECASE)
+                if match:
+                    task_keywords = task_keywords or match.group(1).strip()
+                    candidate_name_raw = candidate_name_raw or (match.group(2).strip() if match.group(2) else None)
 
             if not candidate_name_raw:
                 state["onboarding_result"] = (

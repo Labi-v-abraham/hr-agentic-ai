@@ -963,6 +963,10 @@ if query:
             st.session_state[session_key].append({"role": "assistant", "content": answer})
             st.stop()
 
+    mentioned_role = extract_role_from_query(query, kbs)
+    if mentioned_role:
+        st.session_state.request_role = mentioned_role
+
     if role_context_required and st.session_state.get("request_role"):
         active_kbs = [st.session_state.request_role]
     else:

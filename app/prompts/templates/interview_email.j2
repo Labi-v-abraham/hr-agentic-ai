@@ -19,10 +19,11 @@ Instructions:
 - Mention they have been shortlisted.
 - Invite them for an interview.
 - Keep the email professional and friendly.
-- Include placeholders for:
-    - Company Name
-    - Interview Date
-    - Interview Time
-    - Interview Mode (Online/Offline)
-    - HR Contact
+- Address the email to: {{ candidate_name if candidate_name else "[Candidate Name]" }}
+- Include the following details, using placeholders if not provided:
+    - Company Name: [Company Name]
+    - Interview Date: {{ interview_date if interview_date else "[Interview Date]" }}
+    - Interview Time: {{ interview_time if interview_time else "[Interview Time]" }}
+    - Interview Mode: {{ interview_mode if interview_mode else "[Interview Mode (Online/Offline)]" }}
+    - HR Contact: [HR Contact]
 - End with a professional closing.

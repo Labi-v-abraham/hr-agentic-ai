@@ -37,8 +37,18 @@ def detect_intent(query: str) -> str:
         return "policy"
 
     # Onboarding keyword fallback
-    if any(phrase in query_lower for phrase in ["start onboarding", "onboarding status", "onboarding checklist"]) or \
-       ("mark" in query_lower and any(w in query_lower for w in ["done", "complete"])):
+    onboarding_start_phrases = ["start onboarding", "onboarding status", "onboarding checklist"]
+    onboarding_complete_verbs = ["mark", "approve", "complete", "finish", "check off"]
+    onboarding_complete_states = ["done", "complete", "completed", "finished"]
+    onboarding_task_hints = ["equipment setup", "hr paperwork", "welcome meeting", "role-specific training", "team introduction", "it equipment"]
+
+    cond1 = any(phrase in query_lower for phrase in onboarding_start_phrases)
+    cond2 = any(verb in query_lower for verb in onboarding_complete_verbs) and \
+            (any(state in query_lower for state in onboarding_complete_states) or "onboarding" in query_lower)
+    cond3 = any(verb in query_lower for verb in onboarding_complete_verbs) and \
+            any(hint in query_lower for hint in onboarding_task_hints)
+
+    if cond1 or cond2 or cond3:
         return "onboarding"
 
     return "general"

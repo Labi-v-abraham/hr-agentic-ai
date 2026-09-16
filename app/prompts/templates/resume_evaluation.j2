@@ -16,4 +16,10 @@ OUTPUT RULES (strictly enforced):
 4. suggested_questions: at most 5 short interview questions targeted at this candidate's    specific gaps. Leave empty if none are warranted.
 5. final_answer: ONE sentence (max 25 words) suitable as a chat reply,    e.g. "The candidate is a moderate match for the {{ current_role }} role with {match_percentage}% alignment."
 6. scorecard: Break down the evaluation into 3-6 specific criteria relevant to THIS role    (derive criteria from the role knowledge base content provided above, not a generic fixed list).    Each criterion needs a 0-100 score and a one-sentence justification grounded in the resume    and role requirements.
-7. candidate_name: Extract the candidate's full name from the resume header or contact section.    If no name is clearly present, use "Unknown Candidate".
+7. candidate_name: Extract the candidate's full name. Look specifically 
+    at the FIRST FEW LINES of the resume text, which typically contain 
+    the name before any contact details, headers, or section titles. 
+    Do not confuse a section header (e.g. "Professional Summary", 
+    "Resume") or a job title with a person's name. Only use 
+    "Unknown Candidate" if the text truly contains no identifiable 
+    personal name anywhere.

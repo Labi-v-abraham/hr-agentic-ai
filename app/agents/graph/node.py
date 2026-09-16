@@ -113,6 +113,16 @@ def candidate_evaluator(state: AgentState):
 
         result = structured_llm.invoke(prompt)
 
+        if result.candidate_name == "Unknown Candidate":
+            try:
+                for line in state["resume_text"].split("\n")[:5]:
+                    line = line.strip()
+                    if line and 2 <= len(line.split()) <= 4 and len(line) < 40 and all(c.isalpha() or c.isspace() for c in line):
+                        result.candidate_name = line
+                        break
+            except Exception:
+                pass
+
         state["match_percentage"] = result.match_percentage
         state["recommendation"] = result.recommendation
         state["analysis"] = result.analysis
@@ -144,11 +154,33 @@ def interview_email_generator(state: AgentState):
     for shortlisted candidates.
     """
 
+    from datetime import date
+    extraction_prompt = render_prompt(
+        "interview_email_extraction.j2",
+        query=state["query"],
+        today_date=date.today().isoformat(),
+    )
+    try:
+        extraction_result = get_llm().invoke(extraction_prompt).content.strip()
+        details = {}
+        for line in extraction_result.split("\n"):
+            if ":" in line:
+                key, val = line.split(":", 1)
+                val = val.strip()
+                if val and val.upper() != "UNKNOWN":
+                    details[key.strip()] = val
+    except Exception:
+        details = {}
+
     prompt = render_prompt(
         "interview_email.j2",
         analysis=state["analysis"],
         match_percentage=state["match_percentage"],
         recommendation=state["recommendation"],
+        candidate_name=details.get("CANDIDATE_NAME"),
+        interview_date=details.get("DATE"),
+        interview_time=details.get("TIME"),
+        interview_mode=details.get("MODE"),
     )
 
     try:

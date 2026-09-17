@@ -23,7 +23,7 @@ def supervisor(state: AgentState):
     to the appropriate specialist.
     """
 
-    state["intent"] = detect_intent(state["query"])
+    state["intent"] = detect_intent(state["query"], state.get("request_analysis"))
 
     state["execution_log"].append(
         f"🧠 Supervisor detected intent: {state['intent']}"

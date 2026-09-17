@@ -2,6 +2,17 @@ from typing import Literal, List, Optional
 from pydantic import BaseModel, Field
 
 
+class RequestAnalysis(BaseModel):
+    intent: str = Field(description="One of: resume, recruitment, policy, email, onboarding, leave, general")
+    mentions_resume_review: bool = Field(description="True if the user wants a resume/candidate evaluated or screened")
+    mentioned_role: str | None = Field(description="A job role or knowledge base name explicitly mentioned, or null if none")
+    mentioned_candidate_name: str | None = Field(description="A candidate's name explicitly mentioned, or null if none")
+    mentioned_task: str | None = Field(description="An onboarding task mentioned (e.g. 'IT equipment setup'), or null if none")
+    task_action: str | None = Field(description="If marking a task complete: 'complete'. If starting onboarding: 'start'. If checking status: 'status'. Else null.")
+    mentioned_start_date: str | None = Field(description="A leave/interview start date mentioned, resolved to YYYY-MM-DD if relative (e.g. 'tomorrow'), or null")
+    mentioned_end_date: str | None = Field(description="A leave end date mentioned, resolved to YYYY-MM-DD, or null")
+
+
 class ScorecardItem(BaseModel):
     criterion: str = Field(
         description=(

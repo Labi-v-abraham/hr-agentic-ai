@@ -1,0 +1,13 @@
+Analyze this HR system request and extract structured information.
+
+Today's date: {{ today_date }}
+Available knowledge bases/roles: {{ available_roles }}
+
+Request: "{{ query }}"
+
+Determine the intent, whether it involves reviewing a resume/candidate, 
+any role/knowledge base mentioned (must match one from the available 
+list above if present), any candidate name mentioned, any onboarding 
+task mentioned and whether the user wants to start/check/complete it, 
+and any dates mentioned (resolve relative dates like "tomorrow" to 
+actual dates).

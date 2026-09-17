@@ -946,8 +946,20 @@ if query:
     with st.chat_message("user"):
         st.markdown(display_query)
 
+    from app.agents.graph.analyzer import analyze_request
+
+    # Existing keyword logic as fallback
     resume_required = any(word in query.lower() for word in ["resume", "candidate", "screen", "evaluate", "recruitment", "shortlist"])
     role_context_required = resume_required or any(word in query.lower() for word in ["interview question", "role", "position", "job description", "requirements"])
+    mentioned_role_fallback = extract_role_from_query(query, kbs)
+
+    analysis_result = analyze_request(query, kbs)
+    if analysis_result:
+        resume_required = analysis_result.get("mentions_resume_review", False)
+        mentioned_role = analysis_result.get("mentioned_role")
+        role_context_required = resume_required or (mentioned_role is not None) or analysis_result.get("intent") in ("email", "onboarding")
+    else:
+        mentioned_role = mentioned_role_fallback
 
     if resume_required:
         if not authz.can_review_resumes():
@@ -963,7 +975,6 @@ if query:
             st.session_state[session_key].append({"role": "assistant", "content": answer})
             st.stop()
 
-    mentioned_role = extract_role_from_query(query, kbs)
     if mentioned_role:
         st.session_state.request_role = mentioned_role
 
@@ -994,6 +1005,7 @@ if query:
         "policy": "",
         "final_answer": "",
         "execution_log": [],
+        "request_analysis": analysis_result,
     }
 
     resume_keywords = ["resume", "candidate", "screen", "evaluate", "recruitment", "shortlist"]

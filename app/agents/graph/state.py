@@ -25,3 +25,4 @@ class AgentState(TypedDict):
     knowledge_gap: Optional[bool]
     # Leave request fields (additive only)
     leave_result: Optional[str]
+    request_analysis: Optional[dict]

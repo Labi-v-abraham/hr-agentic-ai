@@ -449,32 +449,38 @@ def onboarding_specialist(state: AgentState):
             import re
             task_keywords = None
             candidate_name_raw = None
-            try:
-                extraction_prompt = render_prompt(
-                    "onboarding_task_extraction.j2",
-                    query=state["query"],
-                )
-                llm_result = get_llm().invoke(extraction_prompt).content.strip()
-                lines = llm_result.split("\n")
-                for line in lines:
-                    if line.startswith("TASK:"):
-                        val = line.replace("TASK:", "").strip()
-                        if val and val.upper() != "UNKNOWN":
-                            task_keywords = val
-                    elif line.startswith("CANDIDATE:"):
-                        val = line.replace("CANDIDATE:", "").strip()
-                        if val and val.upper() != "UNKNOWN":
-                            candidate_name_raw = val
-            except Exception:
-                task_keywords = None
-                candidate_name_raw = None
+            
+            analysis = state.get("request_analysis") or {}
+            task_keywords = analysis.get("mentioned_task")
+            candidate_name_raw = analysis.get("mentioned_candidate_name")
 
-            # Fallback to the existing regex if LLM extraction didn't produce both values
             if not task_keywords or not candidate_name_raw:
-                match = re.search(r"mark (.+?) (?:done|complete)(?:\s+for\s+(.+))?", state["query"], re.IGNORECASE)
-                if match:
-                    task_keywords = task_keywords or match.group(1).strip()
-                    candidate_name_raw = candidate_name_raw or (match.group(2).strip() if match.group(2) else None)
+                try:
+                    extraction_prompt = render_prompt(
+                        "onboarding_task_extraction.j2",
+                        query=state["query"],
+                    )
+                    llm_result = get_llm().invoke(extraction_prompt).content.strip()
+                    lines = llm_result.split("\n")
+                    for line in lines:
+                        if line.startswith("TASK:"):
+                            val = line.replace("TASK:", "").strip()
+                            if val and val.upper() != "UNKNOWN":
+                                task_keywords = val
+                        elif line.startswith("CANDIDATE:"):
+                            val = line.replace("CANDIDATE:", "").strip()
+                            if val and val.upper() != "UNKNOWN":
+                                candidate_name_raw = val
+                except Exception:
+                    task_keywords = task_keywords or None
+                    candidate_name_raw = candidate_name_raw or None
+
+                # Fallback to the existing regex if LLM extraction didn't produce both values
+                if not task_keywords or not candidate_name_raw:
+                    match = re.search(r"mark (.+?) (?:done|complete)(?:\s+for\s+(.+))?", state["query"], re.IGNORECASE)
+                    if match:
+                        task_keywords = task_keywords or match.group(1).strip()
+                        candidate_name_raw = candidate_name_raw or (match.group(2).strip() if match.group(2) else None)
 
             if not candidate_name_raw:
                 state["onboarding_result"] = (

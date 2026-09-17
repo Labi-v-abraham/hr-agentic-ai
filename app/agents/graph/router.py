@@ -5,7 +5,12 @@ from app.prompts.loader import render_prompt
 class IntentClassification(BaseModel):
     intent: str = Field(description="The detected intent. One of: 'recruitment', 'resume', 'email', 'policy', 'general', 'onboarding', 'leave'")
 
-def detect_intent(query: str) -> str:
+def detect_intent(query: str, analysis: dict | None = None) -> str:
+    if analysis and analysis.get("intent"):
+        intent = analysis["intent"].lower().strip()
+        if intent in ["recruitment", "resume", "email", "policy", "onboarding", "leave"]:
+            return intent
+
     prompt = render_prompt("intent_classification.j2", query=query)
 
     try:
